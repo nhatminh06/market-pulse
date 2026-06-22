@@ -1,0 +1,14 @@
+version: 2
+models:
+  - name: fct_daily_metrics
+    columns:
+      - name: ticker
+        tests:
+          - not_null
+          - relationships: { to: ref('dim_ticker'), field: ticker }
+      - name: trade_date
+        tests: [not_null]
+  - name: dim_ticker
+    columns:
+      - name: ticker
+        tests: [not_null, unique]

@@ -1,0 +1,37 @@
+name: ci
+on: [pull_request]
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform -chdir=infra/terraform fmt -check
+      - run: terraform -chdir=infra/terraform init -backend=false
+      - run: terraform -chdir=infra/terraform validate
+
+  dbt-lint-parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install dbt-trino sqlfluff
+      - run: sqlfluff lint dbt/market_pulse/models --dialect trino || true
+      - run: cd dbt/market_pulse && dbt deps && dbt parse --profiles-dir .
+
+  dag-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install "apache-airflow==3.0.6"
+      - run: |
+          python - <<'PY'
+          from airflow.models import DagBag
+          db = DagBag("dags", include_examples=False)
+          assert not db.import_errors, db.import_errors
+          print("DAGs import cleanly:", list(db.dags))
+          PY

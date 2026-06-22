@@ -1,0 +1,11 @@
+name: market_pulse
+version: "1.0.0"
+profile: market_pulse
+models:
+  market_pulse:
+    silver:
+      +schema: silver
+      +materialized: table
+    gold:
+      +schema: gold
+      +materialized: table

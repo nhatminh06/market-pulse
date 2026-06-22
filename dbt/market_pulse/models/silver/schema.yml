@@ -1,0 +1,19 @@
+version: 2
+models:
+  - name: stg_prices
+    description: Cleaned, typed, deduped daily prices.
+    columns:
+      - name: ticker
+        tests: [not_null]
+      - name: trade_date
+        tests: [not_null]
+      - name: close
+        tests:
+          - not_null
+      - name: volume
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, trade_date]

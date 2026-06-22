@@ -1,0 +1,27 @@
+# Secrets — never commit these
+.env
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# dbt
+dbt/market_pulse/target/
+dbt/market_pulse/dbt_packages/
+dbt/market_pulse/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.python-version
+
+# Airflow
+logs/
+airflow_auth/
+
+# Docker
+*.log
+
+# macOS
+.DS_Store

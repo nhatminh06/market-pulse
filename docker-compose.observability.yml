@@ -1,0 +1,24 @@
+name: marketpulse-obs
+services:
+  statsd-exporter:
+    image: prom/statsd-exporter:latest
+    container_name: mp-statsd
+    ports: ["9102:9102", "9125:9125/udp"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mp-prometheus
+    ports: ["9090:9090"]
+    volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml"]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mp-grafana
+    ports: ["3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+
+networks:
+  default:
+    name: marketpulse_default
+    external: true

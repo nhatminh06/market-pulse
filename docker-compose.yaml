@@ -1,0 +1,141 @@
+name: marketpulse
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__METRICS__STATSD_ON: "true"
+    AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+    AIRFLOW__METRICS__STATSD_PORT: "9125"
+    SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./ingestion:/opt/airflow/ingestion
+    - ./quality:/opt/airflow/quality
+    - ./dbt:/opt/airflow/dbt
+    - ./airflow_auth/simple_auth_manager_passwords.json.generated:/opt/airflow/simple_auth_manager_passwords.json.generated
+
+services:
+  # ---------- LAKE: object storage ----------
+  minio:
+    image: minio/minio:latest
+    container_name: mp-minio
+    ports: ["9000:9000", "9001:9001"]
+    env_file: [.env]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes: ["minio_data:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mc-init:
+    image: minio/mc:latest
+    container_name: mp-mc-init
+    depends_on: { minio: { condition: service_started } }
+    env_file: [.env]
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do sleep 2; done &&
+      echo 'minio alias ready'"
+
+  # ---------- LAKE: Iceberg REST catalog ----------
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:latest
+    container_name: mp-iceberg-rest
+    ports: ["8181:8181"]
+    depends_on: { minio: { condition: service_healthy } }
+    env_file: [.env]
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+
+  # ---------- COMPUTE: Trino query engine ----------
+  trino:
+    image: trinodb/trino:latest
+    container_name: mp-trino
+    ports: ["8080:8080"]
+    depends_on: [iceberg-rest]
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+
+  # ---------- ORCHESTRATION: Postgres + Airflow ----------
+  postgres:
+    image: postgres:16
+    container_name: mp-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: ["pg_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: mp-airflow-init
+    depends_on: { postgres: { condition: service_healthy } }
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        echo "Airflow DB migrated. User management handled by SimpleAuthManager via password file."
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: mp-airflow-api
+    depends_on: { airflow-init: { condition: service_completed_successfully } }
+    ports: ["8085:8080"]
+    command: api-server
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: mp-airflow-scheduler
+    depends_on: { airflow-init: { condition: service_completed_successfully } }
+    command: scheduler
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: mp-airflow-dagproc
+    depends_on: { airflow-init: { condition: service_completed_successfully } }
+    command: dag-processor
+
+  # ---------- SERVING: Superset ----------
+  superset:
+    image: apache/superset:latest
+    container_name: mp-superset
+    user: root
+    ports: ["8088:8088"]
+    environment:
+      SUPERSET_SECRET_KEY: "please-change-me-to-a-long-random-string-1234567890"
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://airflow:airflow@postgres/superset
+    depends_on: [postgres, trino]
+    command: >
+      /bin/sh -c "
+      uv pip install --python /app/.venv/bin/python3 trino sqlalchemy-trino &&
+      superset db upgrade &&
+      superset fab create-admin --username admin --firstname a --lastname b --email a@b.com --password admin &&
+      superset init &&
+      superset run -h 0.0.0.0 -p 8088"
+
+volumes:
+  minio_data:
+  pg_data:
