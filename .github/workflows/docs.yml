@@ -84,10 +84,22 @@ jobs:
           docker compose exec -T airflow-scheduler
           python /opt/airflow/ingestion/ingest_bronze.py --days 10 --tickers AAPL,MSFT,NVDA
 
-      - name: Build silver + gold and run dbt tests
+      - name: Debug - confirm working directory and dbt install
+        run: |
+          docker compose exec -T airflow-scheduler bash -c "pwd; ls -la /opt/airflow/dbt/market_pulse; which dbt; dbt --version"
+
+      - name: dbt deps
+        run: |
+          docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow/dbt/market_pulse && dbt deps --profiles-dir ."
+
+      - name: dbt build
+        run: |
+          docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow/dbt/market_pulse && dbt build --profiles-dir ."
+
+      - name: Generate docs against the real warehouse
         run: >
           docker compose exec -T airflow-scheduler
-          bash -c "cd /opt/airflow/dbt/market_pulse && dbt deps && dbt build --profiles-dir ."
+          bash -c "cd /opt/airflow/dbt/market_pulse && dbt docs generate --profiles-dir ."
 
       - name: Generate docs against the real warehouse
         run: >
