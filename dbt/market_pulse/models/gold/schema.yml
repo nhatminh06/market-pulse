@@ -12,3 +12,7 @@ models:
     columns:
       - name: ticker
         tests: [not_null, unique]
+      - name: sector
+        tests:
+          - accepted_values:
+              values: ['Technology', 'Financials', 'Energy', 'Consumer']
