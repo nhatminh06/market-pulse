@@ -88,14 +88,11 @@ jobs:
         run: |
           docker compose exec -T airflow-scheduler bash -c "pwd; ls -la /opt/airflow/dbt/market_pulse; which dbt; dbt --version"
 
-      - name: dbt deps
-        run: |
-          docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow/dbt/market_pulse && dbt deps --profiles-dir ."
-
       - name: dbt build
-        run: |
-          docker compose exec -T airflow-scheduler bash -c "cd /opt/airflow/dbt/market_pulse && dbt build --profiles-dir ."
-
+        run: >
+          docker compose exec -T airflow-scheduler
+          bash -c "cd /opt/airflow/dbt/market_pulse && dbt deps --profiles-dir . && dbt build --profiles-dir ."
+          
       - name: Generate docs against the real warehouse
         run: >
           docker compose exec -T airflow-scheduler
