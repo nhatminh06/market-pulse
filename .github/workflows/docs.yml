@@ -64,6 +64,9 @@ jobs:
           echo "PIPELINE_ACCESS_KEY=$(terraform output -raw pipeline_access_key)" >> ../../.env
           echo "PIPELINE_SECRET_KEY=$(terraform output -raw pipeline_secret_key)" >> ../../.env
 
+      - name: Make dbt project writable by the airflow container user
+        run: sudo chown -R 50000:0 dbt
+      
       - name: Start the rest of the stack
         run: docker compose up -d iceberg-rest trino postgres airflow-init airflow-scheduler
 
