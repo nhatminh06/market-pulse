@@ -2,12 +2,7 @@ FROM apache/airflow:3.0.6-python3.11
 
 USER root
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
-
-# Install pipeline dependencies into the system Python as root
-# (same Python the airflow user runs — just need root to write to site-packages)
-RUN uv pip install --system --no-cache \
+RUN pip install --no-cache-dir \
     "yfinance==0.2.*" \
     "pyiceberg[s3fs,pyarrow]==0.7.*" \
     "dbt-trino==1.8.*" \
@@ -15,5 +10,8 @@ RUN uv pip install --system --no-cache \
     pyarrow \
     trino
 
-# Switch back to airflow for runtime
+# Fail the build immediately if any package didn't land where the airflow
+# user's runtime Python will actually look for it.
+RUN python -c "import yfinance, pyiceberg, pandas, pyarrow, trino; print('deps OK')"
+
 USER airflow
