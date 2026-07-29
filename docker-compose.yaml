@@ -12,6 +12,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__METRICS__STATSD_ON: "true"
     AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
     AIRFLOW__METRICS__STATSD_PORT: "9125"
+    PIPELINE_ACCESS_KEY: ${PIPELINE_ACCESS_KEY}
+    PIPELINE_SECRET_KEY: ${PIPELINE_SECRET_KEY}
     SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
   volumes:
     - ./dags:/opt/airflow/dags
@@ -23,7 +25,7 @@ x-airflow-common: &airflow-common
 services:
   # ---------- LAKE: object storage ----------
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
     container_name: mp-minio
     ports: ["9000:9000", "9001:9001"]
     env_file: [.env]
@@ -39,7 +41,7 @@ services:
       retries: 5
 
   mc-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: mp-mc-init
     depends_on: { minio: { condition: service_started } }
     env_file: [.env]
@@ -50,7 +52,7 @@ services:
 
   # ---------- LAKE: Iceberg REST catalog ----------
   iceberg-rest:
-    image: apache/iceberg-rest-fixture:latest
+    image: apache/iceberg-rest-fixture:1.11.0
     container_name: mp-iceberg-rest
     ports: ["8181:8181"]
     depends_on: { minio: { condition: service_healthy } }
@@ -66,7 +68,7 @@ services:
 
   # ---------- COMPUTE: Trino query engine ----------
   trino:
-    image: trinodb/trino:latest
+    image: trinodb/trino:483
     container_name: mp-trino
     ports: ["8080:8080"]
     depends_on: [iceberg-rest]
@@ -120,7 +122,7 @@ services:
 
   # ---------- SERVING: Superset ----------
   superset:
-    image: apache/superset:latest
+    image: apache/superset:6.1.0
     container_name: mp-superset
     user: root
     ports: ["8088:8088"]

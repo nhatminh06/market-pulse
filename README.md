@@ -87,7 +87,11 @@ docker compose build
 docker compose up -d
 
 # 4. Provision storage via Terraform
-cd infra/terraform && terraform init && terraform apply -auto-approve && cd ../..
+cd infra/terraform && terraform init && terraform apply -auto-approve
+export PIPELINE_ACCESS_KEY="$(terraform output -raw pipeline_access_key)"
+export PIPELINE_SECRET_KEY="$(terraform output -raw pipeline_secret_key)"
+printf '\nPIPELINE_ACCESS_KEY=%s\nPIPELINE_SECRET_KEY=%s\n' "$PIPELINE_ACCESS_KEY" "$PIPELINE_SECRET_KEY" >> ../../.env
+cd ../..
 
 # 5. Backfill bronze (full history, ~60k rows)
 docker compose exec airflow-scheduler python /opt/airflow/ingestion/ingest_bronze.py --start 2015-01-01
