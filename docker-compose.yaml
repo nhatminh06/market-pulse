@@ -25,7 +25,7 @@ x-airflow-common: &airflow-common
 services:
   # ---------- LAKE: object storage ----------
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: minio/minio:latest
     container_name: mp-minio
     ports: ["9000:9000", "9001:9001"]
     env_file: [.env]
@@ -41,7 +41,7 @@ services:
       retries: 5
 
   mc-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: minio/mc:latest
     container_name: mp-mc-init
     depends_on: { minio: { condition: service_started } }
     env_file: [.env]
@@ -52,7 +52,7 @@ services:
 
   # ---------- LAKE: Iceberg REST catalog ----------
   iceberg-rest:
-    image: apache/iceberg-rest-fixture:1.11.0
+    image: apache/iceberg-rest-fixture:latest
     container_name: mp-iceberg-rest
     ports: ["8181:8181"]
     depends_on: { minio: { condition: service_healthy } }
@@ -68,7 +68,7 @@ services:
 
   # ---------- COMPUTE: Trino query engine ----------
   trino:
-    image: trinodb/trino:483
+    image: trinodb/trino:latest
     container_name: mp-trino
     ports: ["8080:8080"]
     depends_on: [iceberg-rest]
@@ -77,7 +77,7 @@ services:
 
   # ---------- ORCHESTRATION: Postgres + Airflow ----------
   postgres:
-    image: postgres:16
+    image: postgres:161
     container_name: mp-postgres
     environment:
       POSTGRES_USER: airflow
@@ -122,7 +122,7 @@ services:
 
   # ---------- SERVING: Superset ----------
   superset:
-    image: apache/superset:6.1.0
+    image: apache/superset:latest
     container_name: mp-superset
     user: root
     ports: ["8088:8088"]
