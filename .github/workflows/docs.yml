@@ -102,6 +102,8 @@ jobs:
           bash -c "cd /opt/airflow/dbt/market_pulse && dbt docs generate --profiles-dir ."
 
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
