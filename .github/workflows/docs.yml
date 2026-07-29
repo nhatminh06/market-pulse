@@ -1,6 +1,11 @@
 name: dbt-docs
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "dbt/market_pulse/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
