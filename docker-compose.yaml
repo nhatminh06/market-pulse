@@ -77,7 +77,7 @@ services:
 
   # ---------- ORCHESTRATION: Postgres + Airflow ----------
   postgres:
-    image: postgres:161
+    image: postgres:16
     container_name: mp-postgres
     environment:
       POSTGRES_USER: airflow
