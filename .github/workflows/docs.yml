@@ -37,8 +37,35 @@ jobs:
       - name: Build the pipeline image
         run: docker compose build
 
-      - name: Start the lakehouse stack
-        run: docker compose up -d minio mc-init iceberg-rest trino postgres airflow-init airflow-scheduler
+      - name: Start MinIO only
+        run: docker compose up -d minio mc-init
+
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 3
+          done
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Provision bucket + pipeline user
+        working-directory: infra/terraform
+        env:
+          MINIO_USER: minioadmin
+          MINIO_PASSWORD: minioadmin
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+      - name: Write pipeline credentials into .env
+        working-directory: infra/terraform
+        run: |
+          echo "PIPELINE_ACCESS_KEY=$(terraform output -raw pipeline_access_key)" >> ../../.env
+          echo "PIPELINE_SECRET_KEY=$(terraform output -raw pipeline_secret_key)" >> ../../.env
+
+      - name: Start the rest of the stack
+        run: docker compose up -d iceberg-rest trino postgres airflow-init airflow-scheduler
 
       - name: Wait for Trino to accept queries
         run: |
@@ -51,17 +78,6 @@ jobs:
             sleep 5
           done
           echo "Trino never became ready" && exit 1
-
-      - uses: hashicorp/setup-terraform@v3
-
-      - name: Provision the warehouse bucket
-        working-directory: infra/terraform
-        env:
-          MINIO_USER: minioadmin
-          MINIO_PASSWORD: minioadmin
-        run: |
-          terraform init
-          terraform apply -auto-approve
 
       - name: Seed a small sample of real data
         run: >
