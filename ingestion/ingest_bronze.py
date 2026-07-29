@@ -2,11 +2,15 @@
 Backfill mode (default): full history. Incremental: pass --days N for a daily append.
 """
 import argparse
+import logging
+import os
+
 import pandas as pd
 import pyarrow as pa
 import yfinance as yf
 from datetime import datetime, timezone
 from pyiceberg.catalog import load_catalog
+from pyiceberg.expressions import And, GreaterThanOrEqual, In
 
 # Avoid SQLite lock contention from yfinance's on-disk cache when fetching
 # multiple tickers concurrently inside a container — /tmp is always writable
@@ -16,14 +20,16 @@ yf.set_tz_cache_location("/tmp/yf_cache")
 TICKERS = ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","JPM","XOM","JNJ",
            "V","WMT","PG","MA","HD","BAC","KO","PEP","COST","DIS"]  # expand freely
 
+logger = logging.getLogger(__name__)
+
 def get_catalog():
     return load_catalog("rest", **{
         "type": "rest",
         "uri": "http://iceberg-rest:8181",
         "warehouse": "s3://warehouse/",
         "s3.endpoint": "http://minio:9000",
-        "s3.access-key-id": "minioadmin",
-        "s3.secret-access-key": "minioadmin",
+        "s3.access-key-id": os.environ["PIPELINE_ACCESS_KEY"],
+        "s3.secret-access-key": os.environ["PIPELINE_SECRET_KEY"],
         "s3.path-style-access": "true",
     })
 
@@ -31,13 +37,31 @@ def fetch(start: str, tickers=None) -> pd.DataFrame:
     tickers = tickers or TICKERS
     raw = yf.download(tickers, start=start, auto_adjust=False, group_by="ticker", progress=False)
     frames = []
+    missing_tickers = []
+    is_multiindex = isinstance(raw.columns, pd.MultiIndex)
+    available_tickers = set(raw.columns.get_level_values(0)) if is_multiindex else set()
+
     for t in tickers:
-        if t not in raw.columns.get_level_values(0):
+        if is_multiindex:
+            if t not in available_tickers:
+                missing_tickers.append(t)
+                continue
+            s = raw[t].reset_index()
+        elif len(tickers) == 1 and not raw.empty:
+            s = raw.reset_index()
+        else:
+            missing_tickers.append(t)
             continue
-        s = raw[t].reset_index()
+
         s.columns = [c.lower().replace(" ", "_") for c in s.columns]
         s["ticker"] = t
         frames.append(s)
+
+    if missing_tickers:
+        logger.warning("No data returned for tickers: %s", ", ".join(missing_tickers))
+    if not frames:
+        raise RuntimeError(f"yfinance returned no data for any requested tickers: {', '.join(tickers)}")
+
     df = pd.concat(frames, ignore_index=True)
     # Enforce clean, predictable types so the Iceberg schema is stable run-to-run
     df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -63,8 +87,10 @@ def main():
 
     cat = get_catalog()
     cat.create_namespace_if_not_exists("bronze")
+    requested_tickers = tickers or TICKERS
     try:
         table = cat.load_table("bronze.prices")
+        table.delete(And(GreaterThanOrEqual("date", start), In("ticker", requested_tickers)))
     except Exception:
         table = cat.create_table("bronze.prices", schema=arrow.schema)
     table.append(arrow)
