@@ -30,15 +30,11 @@ jobs:
       - name: Install dbt
         run: pip install "dbt-trino==1.8.*"
 
-      - name: Generate static docs (no live warehouse required)
+      - name: Generate docs (no live warehouse required)
         working-directory: dbt/market_pulse
         run: |
           dbt deps
-          dbt docs generate --profiles-dir . --static --empty-catalog
-
-      - name: Rename for Pages entrypoint
-        working-directory: dbt/market_pulse/target
-        run: mv static_index.html index.html
+          dbt docs generate --profiles-dir . --empty-catalog
 
       - uses: actions/configure-pages@v5
 
