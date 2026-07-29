@@ -1,11 +1,6 @@
 name: dbt-docs
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "dbt/market_pulse/**"
-      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -20,27 +15,73 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dbt
-        run: pip install "dbt-trino==1.8.*"
-
-      - name: Generate docs (no live warehouse required)
-        working-directory: dbt/market_pulse
+      - name: Write .env for the stack
         run: |
-          dbt deps
-          dbt docs generate --profiles-dir . --empty-catalog
+          cat > .env <<'EOF'
+          MINIO_ROOT_USER=minioadmin
+          MINIO_ROOT_PASSWORD=minioadmin
+          AWS_ACCESS_KEY_ID=minioadmin
+          AWS_SECRET_ACCESS_KEY=minioadmin
+          AWS_REGION=us-east-1
+          EOF
+
+      - name: Build the pipeline image
+        run: docker compose build
+
+      - name: Start the lakehouse stack
+        run: docker compose up -d minio mc-init iceberg-rest trino postgres airflow-init airflow-scheduler
+
+      - name: Wait for Trino to accept queries
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/v1/info >/dev/null; then
+              echo "Trino is up"
+              exit 0
+            fi
+            echo "Waiting for Trino... ($i/30)"
+            sleep 5
+          done
+          echo "Trino never became ready" && exit 1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Provision the warehouse bucket
+        working-directory: infra/terraform
+        env:
+          MINIO_USER: minioadmin
+          MINIO_PASSWORD: minioadmin
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+      - name: Seed a small sample of real data
+        run: >
+          docker compose exec -T airflow-scheduler
+          python /opt/airflow/ingestion/ingest_bronze.py --days 10 --tickers AAPL,MSFT,NVDA
+
+      - name: Build silver + gold and run dbt tests
+        run: >
+          docker compose exec -T airflow-scheduler
+          bash -c "cd /opt/airflow/dbt/market_pulse && dbt deps && dbt build --profiles-dir ."
+
+      - name: Generate docs against the real warehouse
+        run: >
+          docker compose exec -T airflow-scheduler
+          bash -c "cd /opt/airflow/dbt/market_pulse && dbt docs generate --profiles-dir ."
 
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dbt/market_pulse/target
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down -v
 
   deploy:
     needs: build
