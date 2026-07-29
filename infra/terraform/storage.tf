@@ -3,7 +3,6 @@ resource "minio_s3_bucket" "warehouse" {
   acl    = "private"
 }
 
-# Least-privilege policy: the pipeline account can only touch the warehouse bucket.
 resource "minio_iam_policy" "pipeline_rw" {
   name = "pipeline-readwrite"
   policy = jsonencode({
@@ -27,4 +26,13 @@ resource "minio_iam_user" "pipeline" {
 resource "minio_iam_user_policy_attachment" "attach" {
   user_name   = minio_iam_user.pipeline.name
   policy_name = minio_iam_policy.pipeline_rw.name
+}
+
+output "pipeline_access_key" {
+  value = minio_iam_user.pipeline.id # access key == the user's name
+}
+
+output "pipeline_secret_key" {
+  value     = minio_iam_user.pipeline.secret
+  sensitive = true
 }

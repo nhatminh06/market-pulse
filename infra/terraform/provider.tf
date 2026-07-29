@@ -7,7 +7,5 @@ terraform {
 
 provider "minio" {
   minio_server   = "localhost:9000"
-  minio_user     = "minioadmin"
-  minio_password = "minioadmin"
   minio_ssl      = false
 }
