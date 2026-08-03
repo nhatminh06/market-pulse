@@ -5,9 +5,13 @@ models:
   market_pulse:
     silver:
       +schema: silver
-      +materialized: table
+      +materialized: incremental
+      +incremental_strategy: merge
     gold:
       +schema: gold
       +materialized: table
+seeds:
+  market_pulse:
+    +schema: gold
 flags:
   send_anonymous_usage_stats: false
