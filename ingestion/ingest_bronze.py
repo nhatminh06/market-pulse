@@ -2,14 +2,17 @@
 Backfill mode (default): full history. Incremental: pass --days N for a daily append.
 """
 import argparse
+import csv
 import logging
 import os
+from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
 import yfinance as yf
 from datetime import datetime, timezone
 from pyiceberg.catalog import load_catalog
+from pyiceberg.exceptions import NoSuchTableError
 from pyiceberg.expressions import And, GreaterThanOrEqual, In
 
 # Avoid SQLite lock contention from yfinance's on-disk cache when fetching
@@ -17,24 +20,43 @@ from pyiceberg.expressions import And, GreaterThanOrEqual, In
 # and ephemeral, which is fine for a once-a-day batch job.
 yf.set_tz_cache_location("/tmp/yf_cache")
 
-TICKERS = ["AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","JPM","XOM","JNJ",
-           "V","WMT","PG","MA","HD","BAC","KO","PEP","COST","DIS"]  # expand freely
+# Single source of truth for the ticker universe, shared with dbt's
+# gold/dim_ticker.sql via the same seed file — do not hardcode tickers elsewhere.
+TICKER_SECTOR_MAP_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "dbt" / "market_pulse" / "seeds" / "ticker_sector_map.csv"
+)
 
 logger = logging.getLogger(__name__)
 
+
+def load_tickers(path: Path = TICKER_SECTOR_MAP_PATH) -> list[str]:
+    with open(path, newline="") as f:
+        return [row["ticker"] for row in csv.DictReader(f)]
+
+
 def get_catalog():
+    try:
+        access_key = os.environ["PIPELINE_ACCESS_KEY"]
+        secret_key = os.environ["PIPELINE_SECRET_KEY"]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"Missing required env var {exc}: set PIPELINE_ACCESS_KEY and "
+            "PIPELINE_SECRET_KEY (see .env.example)."
+        ) from None
+
     return load_catalog("rest", **{
         "type": "rest",
         "uri": "http://iceberg-rest:8181",
         "warehouse": "s3://warehouse/",
         "s3.endpoint": "http://minio:9000",
-        "s3.access-key-id": os.environ["PIPELINE_ACCESS_KEY"],
-        "s3.secret-access-key": os.environ["PIPELINE_SECRET_KEY"],
+        "s3.access-key-id": access_key,
+        "s3.secret-access-key": secret_key,
         "s3.path-style-access": "true",
     })
 
 def fetch(start: str, tickers=None) -> pd.DataFrame:
-    tickers = tickers or TICKERS
+    tickers = tickers or load_tickers()
     raw = yf.download(tickers, start=start, auto_adjust=False, group_by="ticker", progress=False)
     frames = []
     missing_tickers = []
@@ -87,14 +109,15 @@ def main():
 
     cat = get_catalog()
     cat.create_namespace_if_not_exists("bronze")
-    requested_tickers = tickers or TICKERS
+    requested_tickers = tickers or load_tickers()
     try:
         table = cat.load_table("bronze.prices")
         table.delete(And(GreaterThanOrEqual("date", start), In("ticker", requested_tickers)))
-    except Exception:
+    except NoSuchTableError:
         table = cat.create_table("bronze.prices", schema=arrow.schema)
     table.append(arrow)
-    print(f"Appended {arrow.num_rows} rows to bronze.prices")
+    logger.info("Appended %d rows to bronze.prices", arrow.num_rows)
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()
