@@ -153,8 +153,11 @@ Every pull request triggers GitHub Actions to:
 - Parse and compile-check all dbt models (`dbt parse`)
 - Lint SQL with SQLFluff
 - Confirm all Airflow DAGs import without errors
+- Run the Python unit test suite (`pytest tests/`) covering ingestion parsing/error-handling logic and the data quality gate's check logic
 
 See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+**Known gap:** `dbt build`/`dbt test` and `quality/validate_gold.py`'s actual SQL checks only run against a live Trino/Iceberg instance — today that happens inside the Airflow DAG and the docs-publish workflow (`.github/workflows/docs.yml`), not in PR-gating CI. Running the full stack in CI to close this gap is tracked as future work.
 
 ---
 
