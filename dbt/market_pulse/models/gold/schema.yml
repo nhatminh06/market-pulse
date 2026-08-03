@@ -8,6 +8,9 @@ models:
           - relationships: { to: ref('dim_ticker'), field: ticker }
       - name: trade_date
         tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, trade_date]
   - name: dim_ticker
     columns:
       - name: ticker

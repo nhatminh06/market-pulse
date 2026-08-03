@@ -1,9 +1,15 @@
 {{
-    config(properties={"partitioning": "ARRAY['ticker']", "format": "'PARQUET'"})
+    config(
+        properties={"partitioning": "ARRAY['ticker']", "format": "'PARQUET'"},
+        unique_key=["ticker", "trade_date"]
+    )
 }}
 
 with src as (
     select * from {{ source('bronze', 'prices') }}
+    {% if is_incremental() %}
+        where date >= (select max(t.trade_date) from {{ this }} as t)
+    {% endif %}
 ),
 
 cleaned as (
@@ -15,12 +21,13 @@ cleaned as (
         cast(low as double) as low,
         cast(close as double) as close,
         cast(adj_close as double) as adj_close,
-        cast(volume as bigint) as volume
+        cast(volume as bigint) as volume,
+        _ingested_at
     from src
     where close is not null and close > 0 and volume >= 0
 )
 
--- dedupe: keep one row per ticker/day even if bronze was re-ingested
+-- dedupe: keep the latest-ingested row per ticker/day if bronze was re-ingested
 select
     ticker,
     trade_date,
@@ -34,7 +41,7 @@ from (
     select
         *,
         row_number()
-            over (partition by ticker, trade_date order by trade_date)
+            over (partition by ticker, trade_date order by _ingested_at desc)
             as rn
     from cleaned
 )
