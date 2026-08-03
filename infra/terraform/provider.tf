@@ -6,6 +6,6 @@ terraform {
 }
 
 provider "minio" {
-  minio_server   = "localhost:9000"
-  minio_ssl      = false
+  minio_server = "localhost:9000"
+  minio_ssl    = false
 }
