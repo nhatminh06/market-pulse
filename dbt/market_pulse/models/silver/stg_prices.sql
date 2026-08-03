@@ -44,5 +44,5 @@ from (
             over (partition by ticker, trade_date order by _ingested_at desc)
             as rn
     from cleaned
-)
+) as deduped
 where rn = 1
