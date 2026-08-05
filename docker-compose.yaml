@@ -20,6 +20,10 @@ x-airflow-common: &airflow-common
     - ./ingestion:/opt/airflow/ingestion
     - ./quality:/opt/airflow/quality
     - ./dbt:/opt/airflow/dbt
+    # Read-only: lets the manual/scheduled e2e workflow load a deterministic
+    # fixture into bronze without a live yfinance call. Not used by the
+    # normal daily DAG run.
+    - ./tests/fixtures:/opt/airflow/tests/fixtures:ro
     - ./airflow_auth/simple_auth_manager_passwords.json.generated:/opt/airflow/simple_auth_manager_passwords.json.generated
 
 services:
@@ -80,10 +84,15 @@ services:
     image: postgres:16
     container_name: mp-postgres
     environment:
+      # Local-development-only credentials — not safe for a shared/production instance.
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
-    volumes: ["pg_data:/var/lib/postgresql/data"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # Only the POSTGRES_DB database is created automatically; Superset needs
+      # a second "superset" database on this same instance (see below).
+      - ./infra/postgres/init-superset-db.sql:/docker-entrypoint-initdb.d/init-superset-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U airflow"]
       interval: 10s
@@ -126,15 +135,23 @@ services:
     container_name: mp-superset
     user: root
     ports: ["8088:8088"]
+    env_file: [.env]
     environment:
-      SUPERSET_SECRET_KEY: "please-change-me-to-a-long-random-string-1234567890"
+      # Local-development-only defaults — SUPERSET_SECRET_KEY and the admin
+      # password must be overridden via .env for anything beyond a laptop demo.
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-please-change-me-to-a-long-random-string-1234567890}
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://airflow:airflow@postgres/superset
+      SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
     depends_on: [postgres, trino]
+    # fab create-admin exits non-zero (and would stop the container, since
+    # this runs under `sh -c "... && ..."`) if the admin user already exists
+    # on container restart — `|| true` keeps startup idempotent.
     command: >
       /bin/sh -c "
       uv pip install --python /app/.venv/bin/python3 trino sqlalchemy-trino &&
       superset db upgrade &&
-      superset fab create-admin --username admin --firstname a --lastname b --email a@b.com --password admin &&
+      (superset fab create-admin --username \"$$SUPERSET_ADMIN_USERNAME\" --firstname a --lastname b --email a@b.com --password \"$$SUPERSET_ADMIN_PASSWORD\" || true) &&
       superset init &&
       superset run -h 0.0.0.0 -p 8088"
 
