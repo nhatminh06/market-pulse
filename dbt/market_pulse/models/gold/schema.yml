@@ -1,6 +1,13 @@
 version: 2
 models:
   - name: fct_daily_metrics
+    description: >
+      Gold analytics fact. Grain: one row per (ticker, trade_date). Adds
+      daily/rolling return, moving averages, volatility, and volume-anomaly
+      columns on top of stg_prices — see
+      dbt/market_pulse/models/gold/fct_daily_metrics.sql for the exact
+      window formulas, mirrored as pandas spec tests in
+      tests/unit/test_metric_calculations.py.
     columns:
       - name: ticker
         tests:
@@ -8,7 +15,17 @@ models:
           - relationships: { to: ref('dim_ticker'), field: ticker }
       - name: trade_date
         tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [ticker, trade_date]
   - name: dim_ticker
+    description: >
+      One row per ticker, sourced from seeds/ticker_sector_map.csv (the
+      single source of truth for the ticker universe, shared with
+      ingestion/ingest_bronze.py). Tickers present in stg_prices but absent
+      from the seed map fall back to sector = 'UNMAPPED', which the
+      accepted_values test below will correctly fail on — that's
+      intentional: an unmapped ticker means the seed is out of date.
     columns:
       - name: ticker
         tests: [not_null, unique]

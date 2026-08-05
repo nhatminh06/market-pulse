@@ -1,25 +1,5 @@
-select distinct
-    ticker,
-    case
-        when
-            ticker in ('AAPL', 'MSFT', 'NVDA', 'GOOGL', 'META')
-            then 'Technology'
-        when ticker in ('JPM', 'BAC', 'V', 'MA') then 'Financials'
-        when ticker in ('XOM') then 'Energy'
-        when
-            ticker in (
-                'JNJ',
-                'PG',
-                'KO',
-                'PEP',
-                'WMT',
-                'COST',
-                'HD',
-                'DIS',
-                'AMZN',
-                'TSLA'
-            )
-            then 'Consumer'
-        else 'UNMAPPED'
-    end as sector
-from {{ ref('stg_prices') }}
+select
+    p.ticker,
+    coalesce(m.sector, 'UNMAPPED') as sector
+from (select distinct ticker from {{ ref('stg_prices') }}) as p
+left join {{ ref('ticker_sector_map') }} as m on p.ticker = m.ticker
