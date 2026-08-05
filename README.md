@@ -77,7 +77,7 @@ make test    # 55 pytest tests, no network/services needed
 ### 2. Full local stack
 ```bash
 cp .env.example .env          # add a Slack webhook to SLACK_WEBHOOK_URL if you want failure alerts
-docker compose build          # builds the custom Airflow image (uv-installed deps)
+docker compose build          # builds the custom Airflow image
 docker compose up -d
 
 cd infra/terraform && terraform init && terraform apply -auto-approve
@@ -205,7 +205,7 @@ a 20-ticker universe) — not a claim that any option is universally superior.
 
 ```
 market-pulse/
-├── Dockerfile                          # Custom Airflow image (uv-installed deps)
+├── Dockerfile                          # Custom Airflow image
 ├── docker-compose.yaml                 # Full local stack
 ├── docker-compose.observability.yml    # Prometheus + Grafana (optional)
 ├── Makefile                            # make help
