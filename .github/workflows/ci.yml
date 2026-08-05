@@ -1,12 +1,44 @@
 name: ci
-on: [pull_request]
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install ruff
+      - run: ruff check ingestion quality tests
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install pytest pandas pyarrow "yfinance==0.2.*" "pyiceberg[s3fs,pyarrow]==0.7.*" trino
+      # No network access, no live Trino/MinIO/Iceberg — every test in
+      # tests/{unit,integration,smoke} runs against fixtures or fakes.
+      - run: pytest tests/ -v
+
   terraform:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8" }
       - run: terraform -chdir=infra/terraform fmt -check
       - run: terraform -chdir=infra/terraform init -backend=false
       - run: terraform -chdir=infra/terraform validate
@@ -19,6 +51,10 @@ jobs:
         with: { python-version: "3.11" }
       - run: pip install dbt-trino sqlfluff
       - run: sqlfluff lint dbt/market_pulse/models --dialect trino
+      # dbt parse only checks that the project/YAML/Jinja is well-formed — it
+      # does not connect to Trino and does not verify the SQL compiles or
+      # runs correctly against real data. That's covered by the manual/
+      # scheduled E2E workflow (.github/workflows/e2e.yml).
       - run: cd dbt/market_pulse && dbt deps && dbt parse --profiles-dir .
 
   dag-import:
@@ -31,7 +67,45 @@ jobs:
       - run: |
           python - <<'PY'
           from airflow.models import DagBag
+
           db = DagBag("dags", include_examples=False)
           assert not db.import_errors, db.import_errors
-          print("DAGs import cleanly:", list(db.dags))
+
+          assert "market_pulse" in db.dags, "expected DAG id 'market_pulse' not found"
+          dag = db.dags["market_pulse"]
+
+          expected_task_ids = {"ingest_bronze", "dbt_build", "validate_gold"}
+          actual_task_ids = set(dag.task_ids)
+          assert actual_task_ids == expected_task_ids, (expected_task_ids, actual_task_ids)
+
+          ingest, transform, quality = (dag.get_task(t) for t in ["ingest_bronze", "dbt_build", "validate_gold"])
+          assert transform.task_id in ingest.downstream_task_ids
+          assert quality.task_id in transform.downstream_task_ids
+
+          print("DAG structure OK:", dag.dag_id, sorted(actual_task_ids))
           PY
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose -f docker-compose.yaml config --quiet
+      - run: docker compose -f docker-compose.observability.yml config --quiet
+
+  yaml-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install yamllint
+      - run: |
+          yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable, braces: disable}}" \
+            .github/workflows docker-compose.yaml docker-compose.observability.yml
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: raven-actions/actionlint@v2

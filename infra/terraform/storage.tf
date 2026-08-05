@@ -8,8 +8,8 @@ resource "minio_iam_policy" "pipeline_rw" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+      Effect = "Allow"
+      Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
       Resource = [
         "arn:aws:s3:::${minio_s3_bucket.warehouse.bucket}",
         "arn:aws:s3:::${minio_s3_bucket.warehouse.bucket}/*"
