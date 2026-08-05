@@ -2,7 +2,8 @@ FROM apache/airflow:3.0.6-python3.11
 
 USER airflow
 
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir uv && \
+    uv pip install --system --no-cache \
     "yfinance==0.2.*" \
     "pyiceberg[s3fs,pyarrow]==0.7.*" \
     "dbt-core==1.8.*" \

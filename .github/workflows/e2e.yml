@@ -1,0 +1,141 @@
+name: e2e
+
+# Full-stack validation against a small, deterministic fixture (NOT live
+# yfinance data — see the "Load a fixture" step). This is deliberately kept
+# out of pull_request: it builds and starts the entire docker-compose stack
+# (MinIO, Iceberg REST, Trino, Postgres, Airflow), which is slow and uses
+# more memory than is reliable on every PR. Pull requests instead get the
+# fast static checks in ci.yml (dbt parse, SQLFluff, pytest, DAG import,
+# compose config). This workflow is the only place dbt build/test and
+# quality/validate_gold.py actually run against live Trino/Iceberg in CI.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"  # weekly, Monday 06:17 UTC — arbitrary off-peak time
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  fixture-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write .env for the stack
+        run: |
+          cat > .env <<'EOF'
+          MINIO_ROOT_USER=minioadmin
+          MINIO_ROOT_PASSWORD=minioadmin
+          AWS_ACCESS_KEY_ID=minioadmin
+          AWS_SECRET_ACCESS_KEY=minioadmin
+          AWS_REGION=us-east-1
+          SUPERSET_SECRET_KEY=e2e-only-not-a-real-secret
+          SUPERSET_ADMIN_USERNAME=admin
+          SUPERSET_ADMIN_PASSWORD=admin
+          EOF
+
+      - name: Build the pipeline image
+        run: docker compose build
+
+      - name: Start MinIO
+        run: docker compose up -d minio mc-init
+
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live && exit 0
+            echo "Waiting for MinIO... ($i/20)"
+            sleep 3
+          done
+          echo "MinIO never became ready" && exit 1
+
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8" }
+
+      - name: Provision bucket + pipeline user
+        working-directory: infra/terraform
+        env:
+          MINIO_USER: minioadmin
+          MINIO_PASSWORD: minioadmin
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+      - name: Write pipeline credentials into .env
+        working-directory: infra/terraform
+        run: |
+          echo "PIPELINE_ACCESS_KEY=$(terraform output -raw pipeline_access_key)" >> ../../.env
+          echo "PIPELINE_SECRET_KEY=$(terraform output -raw pipeline_secret_key)" >> ../../.env
+
+      - name: Make dbt project writable by the airflow container user
+        run: sudo chown -R 50000:0 dbt
+
+      - name: Start Iceberg REST, Trino, Postgres, Airflow
+        run: docker compose up -d iceberg-rest trino postgres airflow-init airflow-scheduler
+
+      - name: Wait for Trino to accept queries
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/v1/info >/dev/null && echo "Trino is up" && exit 0
+            echo "Waiting for Trino... ($i/30)"
+            sleep 5
+          done
+          echo "Trino never became ready" && exit 1
+
+      - name: Load a fixture into bronze (no live yfinance call)
+        run: |
+          docker compose exec -T airflow-scheduler python - <<'PY'
+          import sys
+          sys.path.insert(0, "/opt/airflow")
+          import pandas as pd
+          from datetime import datetime, timezone
+          from ingestion.ingest_bronze import validate_ohlcv_frame, deduplicate_prices, get_catalog, write_bronze_table
+
+          df = pd.read_csv("/opt/airflow/tests/fixtures/valid_ohlcv.csv", parse_dates=["date"])
+          df["date"] = df["date"].dt.date
+          df["_ingested_at"] = datetime.now(timezone.utc)
+          df = validate_ohlcv_frame(df)
+          df = deduplicate_prices(df)
+
+          cat = get_catalog()
+          tickers = sorted(df["ticker"].unique().tolist())
+          n = write_bronze_table(cat, df, tickers, start=str(df["date"].min()))
+          print(f"Loaded {n} fixture rows into bronze.prices for {tickers}")
+          PY
+
+      - name: dbt build (real Trino/Iceberg, fixture data)
+        run: >
+          docker compose exec -T airflow-scheduler
+          bash -c "cd /opt/airflow/dbt/market_pulse && dbt deps --profiles-dir . && dbt build --profiles-dir . --full-refresh"
+
+      - name: Gold data-quality gate
+        run: >
+          docker compose exec -T airflow-scheduler
+          python /opt/airflow/quality/validate_gold.py
+
+      - name: One representative Trino query
+        run: >
+          docker compose exec -T trino
+          trino --execute "select ticker, trade_date, daily_return, sma_20, is_volume_anomaly from iceberg.gold.fct_daily_metrics order by trade_date desc limit 10"
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs --no-color > /tmp/e2e-compose-logs.txt
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-compose-logs
+          path: /tmp/e2e-compose-logs.txt
+          retention-days: 7
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down -v

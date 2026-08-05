@@ -1,15 +1,36 @@
 version: 2
 models:
   - name: stg_prices
-    description: Cleaned, typed, deduped daily prices.
+    description: >
+      Cleaned, typed, deduped daily OHLCV prices. Grain: one row per
+      (ticker, trade_date). Deduplication keeps the most-recently-ingested
+      row per key (see stg_prices.sql). OHLC consistency (low <= high,
+      open/close within [low, high]) is enforced in the model's WHERE
+      clause, not surfaced as a test failure here — the same rule is
+      already applied by ingestion/ingest_bronze.py:validate_ohlcv_frame
+      before a row reaches bronze in the first place.
     columns:
       - name: ticker
+        description: Upper-cased equity ticker symbol.
         tests: [not_null]
       - name: trade_date
+        description: Trading date (UTC calendar date as returned by yfinance).
+        tests: [not_null]
+      - name: open
+        tests: [not_null]
+      - name: high
+        tests: [not_null]
+      - name: low
         tests: [not_null]
       - name: close
+        description: Raw (unadjusted) closing price.
         tests:
           - not_null
+      - name: adj_close
+        description: >
+          Split/dividend-adjusted closing price. Nullable — yfinance can omit
+          it for freshly-listed or delisted tickers; the gold layer's return
+          calculation already guards a missing prior value via nullif().
       - name: volume
         tests:
           - dbt_utils.accepted_range:
@@ -17,3 +38,5 @@ models:
     tests:
       - dbt_utils.unique_combination_of_columns:
           combination_of_columns: [ticker, trade_date]
+      - dbt_utils.expression_is_true:
+          expression: "low <= high"

@@ -5,3 +5,7 @@ sources:
     schema: bronze
     tables:
       - name: prices
+        loaded_at_field: "_ingested_at"
+        freshness:
+          warn_after: { count: 30, period: hour }
+          error_after: { count: 48, period: hour }

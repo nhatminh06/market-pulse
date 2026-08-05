@@ -44,6 +44,7 @@ jobs:
         run: |
           for i in $(seq 1 20); do
             curl -sf http://localhost:9000/minio/health/live && break
+            echo "Waiting for MinIO... ($i/20)"
             sleep 3
           done
 
@@ -66,7 +67,7 @@ jobs:
 
       - name: Make dbt project writable by the airflow container user
         run: sudo chown -R 50000:0 dbt
-      
+
       - name: Start the rest of the stack
         run: docker compose up -d iceberg-rest trino postgres airflow-init airflow-scheduler
 
