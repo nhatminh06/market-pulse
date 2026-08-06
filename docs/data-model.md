@@ -4,18 +4,39 @@
 
 | Layer | Table | Grain | Key | Materialization | Partitioning |
 |---|---|---|---|---|---|
-| Bronze | `bronze.prices` | one row per fetch, append-only | none enforced (raw landing zone) | Iceberg table, append-only | `ticker` |
+| Bronze | `bronze.prices` | one row per (ticker, date) within any window that's been (re)fetched | none enforced (raw landing zone) | Iceberg table, delete-scoped-window-then-append | `ticker` |
 | Silver | `silver.stg_prices` | one row per (ticker, trade_date) | `(ticker, trade_date)`, enforced by `dbt_utils.unique_combination_of_columns` | table | `ticker` |
 | Gold | `gold.fct_daily_metrics` | one row per (ticker, trade_date) | `(ticker, trade_date)`, enforced by `dbt_utils.unique_combination_of_columns` | table | `ticker` |
 | Gold | `gold.dim_ticker` | one row per ticker | `ticker`, enforced by `unique` | seed-joined view | n/a |
 
 ## Bronze: `bronze.prices`
 
-Raw landing zone. One row per (ticker, date, fetch) — a rerun that
-overlaps a prior window deletes the overlapping (ticker, date) range first
-(see `ingestion/ingest_bronze.py:write_bronze_table`), so bronze is
-idempotent for reruns of the *same* window, but is not itself deduplicated
-against unrelated windows; that guarantee lives in silver.
+Raw landing zone. Bronze is **not append-only** — it is not correct to
+describe it that way, and earlier versions of this document did. The
+actual write pattern, in `ingestion/ingest_bronze.py:write_bronze_table`,
+has three distinct aspects worth separating:
+
+- **Physical write behavior:** each run deletes any existing rows matching
+  the exact (ticker, date) window it's about to write (`date >= start AND
+  ticker IN requested_tickers`), then appends the freshly fetched batch.
+  This is a delete-scoped-window-then-append pattern, not a blind append
+  and not a full merge/upsert against the whole table.
+- **Logical grain (current table state):** one row per (ticker, date) for
+  any window that has ever been fetched, since a rerun of the *same*
+  window replaces it rather than duplicating it. A rerun with a
+  *different* window (e.g. a narrower `--tickers` or `--start` filter)
+  only rewrites that window — dates/tickers outside it are untouched.
+  Bronze on its own does not guarantee no duplicates exist across
+  unrelated, never-rewritten windows; that end-to-end guarantee comes from
+  silver's merge on (ticker, trade_date), not from bronze.
+- **Historical/snapshot behavior:** because the write is a real Iceberg
+  delete + append (not a physical overwrite), each run produces a new
+  Iceberg snapshot. The *previous* snapshot — including the rows that were
+  just deleted — remains queryable via Iceberg time travel until that
+  snapshot is expired (see the "Iceberg operations" section of the
+  README). Bronze is idempotent for reruns of the same window in the sense
+  that the *current* snapshot converges to one row per key; it is not
+  immutable/append-only across snapshots.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|

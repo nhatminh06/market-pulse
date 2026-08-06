@@ -1,6 +1,6 @@
 # Market Pulse
 
-An end-to-end stock-market analytics lakehouse built with Apache Iceberg, Trino, dbt, Airflow, MinIO, Terraform, and Superset — runs entirely on a local machine via Docker Compose, at zero cloud cost.
+An end-to-end stock-market analytics lakehouse built with Apache Iceberg, Trino, dbt, Airflow, MinIO, Terraform, and Superset — runs entirely on a local machine via Docker Compose, with no paid cloud infrastructure required.
 
 ![Architecture](architecture.png)
 
@@ -31,7 +31,7 @@ dbt-trino SQL, orchestrated daily by Airflow.
 ## Key capabilities
 
 - **Incremental + backfill ingestion** — `ingestion/ingest_bronze.py --start` for a full history pull, `--days N` for a daily incremental run; delete-and-replace-partition write pattern scoped to the exact ticker/date window fetched (see `docs/data-model.md` for the precise idempotency guarantee).
-- **Iceberg-backed storage on MinIO** — ACID writes, schema evolution, time travel, all via the free S3-compatible MinIO API.
+- **Iceberg-backed storage on MinIO** — ACID writes, schema evolution, time travel, all via MinIO's open-source S3-compatible API (no cloud storage account required for local development).
 - **dbt-trino bronze → silver → gold** — silver is `materialized='incremental'`; gold recomputes rolling windows as a full table. 16 dbt tests across `not_null`, `unique`, `relationships`, `accepted_values`, `dbt_utils.unique_combination_of_columns`, and a custom `low <= high` expression test.
 - **Airflow 3.x (LocalExecutor)** orchestration — `ingest_bronze → dbt_build → validate_gold`, with retries and optional Slack failure alerting (silently skipped, not failed, if no webhook is configured).
 - **A Python data-quality gate** (`quality/validate_gold.py`) with its check-interpretation logic unit-tested independent of a live warehouse.
@@ -45,12 +45,12 @@ dbt-trino SQL, orchestrated daily by Airflow.
 
 ## Data model
 
-| Layer | Table | Grain | Materialization |
-|---|---|---|---|
-| Bronze | `bronze.prices` | append-only, one row per fetch | Iceberg table |
-| Silver | `silver.stg_prices` | one row per (ticker, trade_date) | incremental (merge) |
-| Gold | `gold.fct_daily_metrics` | one row per (ticker, trade_date) | table |
-| Gold | `gold.dim_ticker` | one row per ticker | seed-joined |
+| Layer | Table | Write pattern | Current-state grain | Materialization |
+|---|---|---|---|---|
+| Bronze | `bronze.prices` | delete rows in the fetched ticker/date window, then append the replacement batch (not blind append — see `docs/data-model.md`) | one row per (ticker, date) within any window that's been (re)fetched | Iceberg table |
+| Silver | `silver.stg_prices` | incremental merge on (ticker, trade_date) | one row per (ticker, trade_date) | incremental (merge) |
+| Gold | `gold.fct_daily_metrics` | full rebuild each run | one row per (ticker, trade_date) | table |
+| Gold | `gold.dim_ticker` | full rebuild each run | one row per ticker | seed-joined |
 
 Full column-level detail, nullability rules, and the exact window-function
 formulas behind returns/SMA/volatility/anomaly detection are in
@@ -75,16 +75,23 @@ make test    # 55 pytest tests, no network/services needed
 ```
 
 ### 2. Full local stack
+
+Order matters here: Airflow/Trino/Iceberg REST read `PIPELINE_ACCESS_KEY`/
+`PIPELINE_SECRET_KEY` from `.env` once, at container start — starting them
+before Terraform has provisioned those credentials means they'd start with
+blank values and need a restart to pick up the real ones. Start only MinIO
+first, provision credentials, then start everything else (the same order
+`.github/workflows/e2e.yml` uses, which has been verified to work end-to-end).
+
 ```bash
 cp .env.example .env          # add a Slack webhook to SLACK_WEBHOOK_URL if you want failure alerts
 docker compose build          # builds the custom Airflow image
-docker compose up -d
 
-cd infra/terraform && terraform init && terraform apply -auto-approve
-export PIPELINE_ACCESS_KEY="$(terraform output -raw pipeline_access_key)"
-export PIPELINE_SECRET_KEY="$(terraform output -raw pipeline_secret_key)"
-printf '\nPIPELINE_ACCESS_KEY=%s\nPIPELINE_SECRET_KEY=%s\n' "$PIPELINE_ACCESS_KEY" "$PIPELINE_SECRET_KEY" >> ../../.env
-cd ../..
+docker compose up -d minio mc-init
+cd infra/terraform && terraform init && terraform apply -auto-approve && cd ../..
+./scripts/configure-local-env.sh   # writes PIPELINE_ACCESS_KEY/SECRET_KEY into .env, idempotently
+
+docker compose up -d          # starts everything else with correct credentials
 ```
 
 ### 3. Ingest and transform
@@ -132,8 +139,8 @@ See [`docs/testing.md`](docs/testing.md) for the full breakdown of what runs
 where and why. Short version:
 
 - **Pull-request CI** runs everything that doesn't need a live warehouse: Python lint + 55 pytest tests, `dbt parse`, SQLFluff, Airflow DAG import/structure, `docker compose config`, YAML/Action lint, Terraform fmt/validate.
-- **Not run on every PR**: `dbt build`, `dbt test`, and the quality gate's real SQL checks — these need Trino/Iceberg actually running. They execute in a manual/weekly [`e2e.yml`](.github/workflows/e2e.yml) workflow instead, against a small deterministic fixture (no live yfinance call).
-- Gold-layer formulas (returns, SMA, volatility, volume anomaly) are covered as **pandas specification tests** against the exact formulas in `fct_daily_metrics.sql` — not a run of the actual Trino SQL. Real SQL correctness is only proven by the E2E workflow.
+- **Not run on every PR**: `dbt build`, `dbt test`, and the quality gate's real SQL checks — these need Trino/Iceberg actually running. They execute in a manual/weekly [`e2e.yml`](.github/workflows/e2e.yml) workflow instead, against a small deterministic fixture (no live yfinance call). **Verified**: [run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) (2026-08-06) completed successfully — 21/21 dbt model+test checks passed, the Python quality gate reported 4/4 checks passing, and a representative Trino query against `gold.fct_daily_metrics` returned real computed values.
+- Gold-layer formulas (returns, SMA, volatility, volume anomaly) are covered as **pandas specification tests** against the exact formulas in `fct_daily_metrics.sql` — not a run of the actual Trino SQL by themselves. Real SQL correctness against live Trino is what the E2E run above verified.
 
 ---
 
@@ -167,13 +174,13 @@ a 20-ticker universe) — not a claim that any option is universally superior.
 
 **Iceberg over Delta Lake:** an open table-format standard with multi-engine support (Trino, Spark, Flink, Snowflake, BigQuery) rather than tooling concentrated around one vendor — useful here specifically because the stack is meant to be engine-agnostic.
 
-**MinIO over real AWS S3:** identical S3 API, so PyIceberg/Trino/Terraform code is unchanged if you point it at real S3 later — one endpoint config value, not a rewrite. Keeps this project's cloud cost at $0.
+**MinIO over real AWS S3:** MinIO implements the S3 API, so ingestion and table-access code (PyIceberg, Trino, Terraform's MinIO provider) can stay largely unchanged if pointed at real S3 later. A real migration is still real work, not a one-line change: new cloud credentials and IAM policies, network and TLS configuration, a different Terraform provider (or `aws` provider config), catalog endpoint changes, and end-to-end operational validation. What MinIO buys here is local reproducibility and no cloud bill during development, not a finished migration path.
 
-**Trino over Spark for transforms:** at this data volume, Spark's cluster-management overhead buys nothing Trino's SQL engine doesn't already provide, and Trino starts faster with a smaller memory footprint. Spark is the natural next step at a scale where distributed shuffle actually matters.
+**Trino over Spark for transforms:** this is a SQL-centric transform workload on a small (20-ticker) dataset with no distributed-shuffle requirement, where Spark's cluster-management overhead doesn't pay for itself and Trino's lower operational footprint suits interactive local querying better. This is a scale-appropriate choice, not a claim that Trino outperforms Spark in general — Spark remains the better fit once the workload needs distributed shuffle or ML pipelines at real volume.
 
-**Airflow LocalExecutor over Celery/Kubernetes:** no message broker or worker fleet needed for one daily DAG on one machine. Swapping to `CeleryExecutor`/`KubernetesExecutor` is a config change, not a DAG rewrite.
+**Airflow LocalExecutor over Celery/Kubernetes:** appropriate for one daily DAG on one machine with no message broker or worker fleet to operate. The DAG logic itself wouldn't need to change to run under `CeleryExecutor` or `KubernetesExecutor`, but adopting either is real infrastructure work — a broker (Redis/RabbitMQ) or a Kubernetes cluster, worker deployment and scaling, networking, and secrets management — not a configuration flag.
 
-**What would change at cloud scale:** MinIO → real S3 (config change), LocalExecutor → Celery/Kubernetes, single Trino container → a Trino cluster (EKS/EMR), `docker compose` → Helm/ECS.
+**What would change at cloud scale:** MinIO → real S3 (new credentials/IAM/networking, not just an endpoint value), LocalExecutor → CeleryExecutor/KubernetesExecutor (added broker or cluster infrastructure), single Trino container → a Trino cluster (EKS/EMR), `docker compose` → Helm charts or ECS task definitions. None of these are free — each carries its own credentials, networking, and operational setup.
 
 ---
 
@@ -181,23 +188,22 @@ a 20-ticker universe) — not a claim that any option is universally superior.
 
 - Small local equity universe (20 tickers) — the ticker/sector seed is meant to be extended, not a hard architectural limit.
 - Live ingestion depends on yfinance, an unofficial free feed with no uptime or accuracy guarantee; data can be delayed, incomplete, or revised.
-- Local Docker Compose is a single-node demo environment, not a production cluster — no resource limits or health checks on several services (Trino, Iceberg REST, all Airflow containers) today.
+- Local Docker Compose is a single-node demo environment, not a production cluster — no hard resource limits are set on any service (only guidance, see Prerequisites). Health checks now exist for every service, but MinIO/Postgres/Trino are the only ones confirmed working against a live container (via the verified E2E run); Iceberg REST, the Airflow API server, and Superset's health checks are best-effort and documented as unverified in `docker-compose.yaml` — nothing else's startup depends on them, so a wrong assumption there shows as "unhealthy" in `docker compose ps`, not a blocked stack.
 - Default local credentials (`minioadmin`/`minioadmin`, `admin`/`admin`, Postgres `airflow`/`airflow`) are safe only because nothing is exposed beyond `localhost` — see `.env.example` before running anything reachable from outside your machine.
 - Grafana comes up with only a Prometheus datasource wired via `docker-compose.observability.yml`; no pre-built dashboards are provisioned yet.
-- The manual/scheduled E2E workflow (`.github/workflows/e2e.yml`) has been written and YAML-validated but not yet executed on GitHub Actions from this environment — treat it as unverified until its first real run.
+- The manual/scheduled E2E workflow (`.github/workflows/e2e.yml`) has completed successfully at least once ([run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380), 2026-08-06) — every subsequent run's result should still be checked rather than assumed, since it depends on upstream Docker image availability and isn't re-verified on every commit.
 - Benchmark numbers are hardware- and dataset-dependent and not yet produced — see Benchmarks above.
 
 ---
 
 ## Roadmap
 
-- Run the E2E workflow for real and commit its first result / fix whatever it surfaces.
 - Produce and commit an actual benchmark result (`docs/benchmarks.md`), replacing "unverified" with real numbers.
 - Add health checks and resource limits to `trino`, `iceberg-rest`, and the Airflow containers in `docker-compose.yaml`.
-- Provision Grafana dashboards (currently datasource-only).
-- Add Iceberg snapshot-management / retention policy documentation and a schema-evolution demo (add a column, show old snapshots still queryable).
+- Provision Grafana dashboards (currently datasource-only) and validate alert rules with `promtool`.
+- Add Iceberg snapshot-management / retention policy documentation and a schema-evolution demo (add a column, show old snapshots still queryable) on a live cluster.
 - Capture the screenshot evidence in `docs/evidence-checklist.md` and link it from this README.
-- Resolve the LICENSE gap below.
+- Re-run the E2E workflow periodically and keep the verified-run link in Known Limitations current.
 
 ---
 
@@ -242,8 +248,4 @@ market-pulse/
 
 ## License
 
-**No LICENSE file exists in this repository yet**, despite prior versions
-of this README stating MIT. Until the repository owner confirms licensing
-intent and a `LICENSE` file is added, treat this project as **all rights
-reserved by default** rather than MIT-licensed. See
-`docs/resume-evidence.md`.
+MIT — see [`LICENSE`](LICENSE).
