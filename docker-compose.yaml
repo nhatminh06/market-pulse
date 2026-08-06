@@ -69,15 +69,40 @@ services:
       CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
       CATALOG_S3_ENDPOINT: http://minio:9000
       CATALOG_S3_PATH__STYLE__ACCESS: "true"
+    healthcheck:
+      # Best-effort: GET /v1/config is part of the Iceberg REST catalog
+      # OpenAPI spec, but curl's presence in this image isn't confirmed —
+      # nothing depends on this service by health condition (see trino's
+      # depends_on below), so a wrong assumption here only shows as
+      # "unhealthy" in `docker compose ps`, it won't block startup.
+      test: ["CMD", "curl", "-sf", "http://localhost:8181/v1/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # ---------- COMPUTE: Trino query engine ----------
   trino:
     image: trinodb/trino:latest
     container_name: mp-trino
     ports: ["8080:8080"]
+    # iceberg-rest's own healthcheck uses curl, which hasn't been confirmed
+    # present in that image (see its healthcheck comment below) — depending
+    # on iceberg-rest by health condition here would stall trino's startup
+    # indefinitely if that assumption is wrong, so this stays a plain
+    # "started" dependency rather than "healthy".
     depends_on: [iceberg-rest]
     volumes:
       - ./trino/catalog:/etc/trino/catalog
+    healthcheck:
+      # Uses the trino CLI (bundled in this image), not curl — confirmed
+      # present via `docker compose exec -T trino trino --execute "..."`
+      # succeeding in the verified E2E run (see docs/testing.md).
+      test: ["CMD", "trino", "--execute", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
 
   # ---------- ORCHESTRATION: Postgres + Airflow ----------
   postgres:
@@ -116,6 +141,18 @@ services:
     depends_on: { airflow-init: { condition: service_completed_successfully } }
     ports: ["8085:8080"]
     command: api-server
+    healthcheck:
+      # Best-effort: Airflow 3's FastAPI-based API server exposes this route,
+      # but it hasn't been exercised against a live container in this repo's
+      # CI/E2E (the E2E fixture path never calls the Airflow API — it runs
+      # ingestion/dbt/quality directly). Nothing currently depends on this
+      # service being "healthy" via Compose, so a wrong endpoint here only
+      # shows as "unhealthy" in `docker compose ps`, it won't block startup.
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   airflow-scheduler:
     <<: *airflow-common
@@ -143,7 +180,9 @@ services:
       SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://airflow:airflow@postgres/superset
       SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
-    depends_on: [postgres, trino]
+    depends_on:
+      postgres: { condition: service_healthy }
+      trino: { condition: service_healthy }
     # fab create-admin exits non-zero (and would stop the container, since
     # this runs under `sh -c "... && ..."`) if the admin user already exists
     # on container restart — `|| true` keeps startup idempotent.
@@ -154,6 +193,15 @@ services:
       (superset fab create-admin --username \"$$SUPERSET_ADMIN_USERNAME\" --firstname a --lastname b --email a@b.com --password \"$$SUPERSET_ADMIN_PASSWORD\" || true) &&
       superset init &&
       superset run -h 0.0.0.0 -p 8088"
+    healthcheck:
+      # Best-effort: Superset has historically exposed GET /health returning
+      # "OK", but this hasn't been exercised against a live container in
+      # this repo's CI/E2E (no automated path starts Superset today).
+      test: ["CMD", "curl", "-sf", "http://localhost:8088/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
 
 volumes:
   minio_data:
