@@ -16,6 +16,8 @@
 | Terraform fmt/init/validate | terraform CLI | Yes (`terraform` job) | N/A |
 | Full pipeline (ingest → bronze → silver → gold → quality gate) against live infra | full docker-compose stack | **No** | Yes, against a fixture (not live yfinance) |
 
+**Verified:** [run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) (2026-08-06) — 21/21 dbt model+test checks passed, 4/4 Python quality-gate checks passed, representative Trino query returned real values. Re-check the workflow's latest run before relying on this being still true.
+
 **Why the split:** Trino, Iceberg REST, and MinIO need to actually be
 running for dbt SQL or the quality gate's queries to mean anything, and
 GitHub-hosted PR runners are not a reliable place to boot a 6+ service
