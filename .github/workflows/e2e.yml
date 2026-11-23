@@ -98,6 +98,14 @@ jobs:
           done
           echo "Trino never became ready" && exit 1
 
+      - name: Record Iceberg REST and Trino image identities
+        run: |
+          for image in trinodb/trino:latest apache/iceberg-rest-fixture:latest; do
+            echo "Image $image"
+            docker image inspect "$image" --format 'id={{.Id}} digests={{json .RepoDigests}}'
+            test "$(docker image inspect "$image" --format '{{json .RepoDigests}}')" != '[]'
+          done
+
       - name: Load a fixture into bronze (no live yfinance call)
         run: |
           docker compose exec -T airflow-scheduler python - <<'PY'
@@ -173,6 +181,9 @@ jobs:
           assert cat.load_table("bronze.prices").scan().to_arrow().num_rows == 6
           print("Atomic correction, partial response, stale-writer rejection and unaffected history verified")
           PY
+
+      - name: Qualify disposable Iceberg lifecycle and recovery
+        run: docker compose exec -T airflow-scheduler python - < tests/integration/qualify_iceberg_lifecycle.py
 
       - name: dbt build (real Trino/Iceberg, fixture data)
         run: >
