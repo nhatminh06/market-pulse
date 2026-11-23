@@ -1,5 +1,19 @@
 # Testing
 
+## V2-M2 lifecycle qualification (verified 2026-11-23)
+
+The [successful M2 branch E2E run 45232058559](https://github.com/nhatminh06/market-pulse/actions/runs/45232058559)
+tested `2a233ac88621b0ace95560844eb2d15e04d0f2df` with Trino 484,
+PyIceberg 0.7.1, and a format-v2 disposable table. It passed snapshot
+inventory, historical reads, restoration through a new commit, schema
+evolution, Trino visibility, table cleanup, and the Bronze-isolation assertion.
+The existing M1 fixture and atomic-ingestion checks passed; dbt reported
+`PASS=21 WARN=0 ERROR=0 SKIP=0 TOTAL=21`, all four Gold checks passed,
+Trino returned the corrected Gold row, and stack/volume teardown completed.
+The [earlier failed run 45229122301](https://github.com/nhatminh06/market-pulse/actions/runs/45229122301)
+tested the prior commit and remains separate failure evidence. Exact image
+digests, snapshot IDs, and limits are in [Iceberg operations](iceberg-operations.md).
+
 ## V2-M1 atomic ingestion (verified 2026-11-23)
 
 `tests/unit/test_incremental_ingestion.py` models staging, atomic publication,
