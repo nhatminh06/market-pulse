@@ -1,6 +1,6 @@
 # Testing
 
-## V2-M1 atomic ingestion (awaiting branch E2E)
+## V2-M1 atomic ingestion (verified 2026-11-23)
 
 `tests/unit/test_incremental_ingestion.py` models staging, atomic publication,
 known conflicts, incomplete provider coverage, retries, invalid batches, and
@@ -11,14 +11,25 @@ corrections, and recovery after a committed write loses its acknowledgement.
 PR CI installs SQLAlchemy to run this test. Neither test substitutes for the
 MinIO/REST/Trino stack.
 
-The manual/weekly `e2e.yml` now stages an abandoned correction, then writes
+The [branch E2E run 45219612981](https://github.com/nhatminh06/market-pulse/actions/runs/45219612981)
+passed at commit `def60d962ee37bbdf7fcd8591d445db7815bb9e5` on GitHub's
+Linux/amd64 runner with MinIO, Iceberg REST, Trino, Terraform, and fixture data.
+The manual/weekly `e2e.yml` stages an abandoned correction, then writes
 one corrected fixture row while requesting both AAPL and MSFT. It checks
 that all other Bronze rows survive, that keys are unique, and that a stale
 second REST-catalog writer is rejected. It then runs the
-existing dbt build, Gold quality gate, Trino query, and teardown. This new
-step has **not** been run on GitHub yet. Run it once on the feature branch
-after review; retain the run URL and exact results before claiming M1 PASS.
-No live yfinance data or production credentials are needed.
+existing dbt build, Gold quality gate, Trino query, and teardown. The run
+reported dbt `PASS=21 WARN=0 ERROR=0 SKIP=0 TOTAL=21`, passed all four Gold
+checks, returned corrected AAPL data from Trino, and removed the stack and
+volumes. [PR CI run 45219542188](https://github.com/nhatminh06/market-pulse/actions/runs/45219542188)
+passed with 68 pytest tests and one skipped live-Trino test.
+
+The lost-acknowledgement recovery test ran against the local SQLite Iceberg
+catalog, not the REST catalog. The REST E2E checked stale-writer rejection;
+one stale-writer test does not establish general concurrent-write safety.
+Neither run used live yfinance data or production credentials. Large
+backfills beyond the 10,000-literal predicate limit require an explicit plan
+and were not qualified by this fixture run.
 
 For an unresolved `CommitOutcomeUnknownError`, do not immediately rerun the
 Airflow task. Inspect the logged `ingestion_run_id`, Iceberg snapshot summaries,
@@ -95,7 +106,7 @@ remain a reproducibility risk; they are outside this image recovery.
 | Terraform fmt/init/validate | terraform CLI | Yes (`terraform` job) | N/A |
 | Full pipeline (ingest → bronze → silver → gold → quality gate) against live infra | full docker-compose stack | **No** | Yes, against a fixture (not live yfinance) |
 
-**Verified:** [run 45209879444](https://github.com/nhatminh06/market-pulse/actions/runs/45209879444) (2026-11-23) — 21/21 dbt model+test checks passed, 4/4 Python quality-gate checks passed, representative Trino query returned real values. The earlier [August 6 run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) also passed those checks. Re-check the latest run before relying on it.
+**Verified:** The latest [V2-M1 branch run 45219612981](https://github.com/nhatminh06/market-pulse/actions/runs/45219612981) (2026-11-23) passed the atomic-ingestion checks above and the full fixture pipeline. The earlier [M1 image recovery run 45209879444](https://github.com/nhatminh06/market-pulse/actions/runs/45209879444) and [August 6 run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) are historical fixture-pipeline evidence. Re-check the latest run before relying on it.
 
 **Why the split:** Trino, Iceberg REST, and MinIO need to actually be
 running for dbt SQL or the quality gate's queries to mean anything, and

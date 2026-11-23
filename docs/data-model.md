@@ -38,8 +38,11 @@ The code does not use PyIceberg 0.7.1's transaction context manager because its
   prove a prior ambiguous commit by ID alone.
 - **Concurrency:** one Airflow DAG run is active at a time, but external
   writers can overlap. Iceberg snapshot requirements reject a stale writer;
-  the application does not silently replay a conflicting batch. The REST
-  catalog and Trino path still need branch E2E qualification.
+  the application does not silently replay a conflicting batch. The
+  [branch E2E run 45219612981](https://github.com/nhatminh06/market-pulse/actions/runs/45219612981)
+  at commit `def60d962ee37bbdf7fcd8591d445db7815bb9e5` verified stale
+  REST-catalog writer rejection and the corrected Gold value through Trino.
+  This single conflict test does not establish general concurrent-write safety.
 - **Cost:** PyIceberg's filtered delete uses copy-on-write for partially
   matching Parquet files. The exact-key expression groups common date/ticker
   coverage and refuses more than 10,000 predicate literals. A larger backfill
