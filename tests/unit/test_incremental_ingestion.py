@@ -15,7 +15,7 @@ write_bronze_table builds (And/GreaterThanOrEqual/EqualTo/In over date and
 ticker) so the delete-then-append scoping is faithfully exercised without a
 live Iceberg REST catalog.
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import pyarrow as pa
@@ -81,7 +81,7 @@ class FakeCatalog:
 def bronze_df(fixtures_dir):
     df = pd.read_csv(fixtures_dir / "valid_ohlcv.csv", parse_dates=["date"])
     df["date"] = df["date"].dt.date
-    df["_ingested_at"] = datetime.now(timezone.utc)
+    df["_ingested_at"] = datetime.now(UTC)
     return df
 
 

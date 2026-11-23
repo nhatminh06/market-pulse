@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.workflow }}
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -39,6 +39,16 @@ jobs:
           SUPERSET_ADMIN_USERNAME=admin
           SUPERSET_ADMIN_PASSWORD=admin
           EOF
+
+      - name: Verify MinIO image before stack startup
+        run: |
+          image=ghcr.io/intikhab49/minio-from-source@sha256:1025a6dd8452e6fe8d3fdf16dbce7c18f8417acd22e5abd7376d8322aee5edab
+          docker pull --platform linux/amd64 "$image"
+          docker image inspect "$image" --format 'Pulled {{json .RepoDigests}}'
+          test "$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          docker run --rm --entrypoint minio "$image" --version | grep -F 'RELEASE.2025-10-15T17-29-55Z'
+          docker run --rm --entrypoint mc "$image" --version | grep -F 'RELEASE.2025-08-13T08-35-41Z'
+          docker run --rm --entrypoint sh "$image" -c 'command -v curl && command -v mc'
 
       - name: Build the pipeline image
         run: docker compose build

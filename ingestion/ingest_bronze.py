@@ -16,7 +16,7 @@ import argparse
 import csv
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -100,7 +100,7 @@ def normalize_ohlcv_frame(raw: pd.DataFrame, tickers: list[str]) -> pd.DataFrame
     for c in ["open", "high", "low", "close", "adj_close"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").astype("float64")
     df["volume"] = pd.to_numeric(df["volume"], errors="coerce").astype("Int64")
-    df["_ingested_at"] = datetime.now(timezone.utc)
+    df["_ingested_at"] = datetime.now(UTC)
     return df[BRONZE_COLUMNS]
 
 
