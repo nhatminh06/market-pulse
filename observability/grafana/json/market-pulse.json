@@ -1,0 +1,25 @@
+{
+  "uid": "market-pulse-operations",
+  "title": "Market Pulse — Pipeline Operations",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-7d", "to": "now"},
+  "panels": [
+    {"id": 1, "type": "row", "title": "Pipeline health", "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1}},
+    {"id": 2, "type": "stat", "title": "Monitoring targets up", "gridPos": {"x": 0, "y": 1, "w": 8, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "up{job=~\"airflow|warehouse\"}"}], "fieldConfig": {"defaults": {"unit": "short", "noValue": "Unknown"}}},
+    {"id": 3, "type": "timeseries", "title": "Airflow task failures (all DAGs)", "gridPos": {"x": 8, "y": 1, "w": 8, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "increase(airflow_task_failures_total[1h])"}]},
+    {"id": 4, "type": "timeseries", "title": "Airflow task duration (p95)", "gridPos": {"x": 16, "y": 1, "w": 8, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, task) (rate(market_pulse_airflow_task_duration_seconds_bucket[1h])))"}], "fieldConfig": {"defaults": {"unit": "s", "noValue": "No task runs"}}},
+    {"id": 5, "type": "row", "title": "Data freshness and quality", "gridPos": {"x": 0, "y": 7, "w": 24, "h": 1}},
+    {"id": 6, "type": "stat", "title": "Latest Bronze ingestion", "gridPos": {"x": 0, "y": 8, "w": 6, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "market_pulse_bronze_latest_ingestion_timestamp_seconds * 1000"}], "fieldConfig": {"defaults": {"unit": "dateTimeAsIso", "noValue": "Unknown"}}},
+    {"id": 7, "type": "stat", "title": "Latest Gold market date", "gridPos": {"x": 6, "y": 8, "w": 6, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "market_pulse_gold_latest_trade_date_timestamp_seconds * 1000"}], "fieldConfig": {"defaults": {"unit": "dateTimeAsIso", "noValue": "Unknown"}}},
+    {"id": 8, "type": "stat", "title": "Gold rows", "gridPos": {"x": 12, "y": 8, "w": 6, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "market_pulse_gold_row_count"}], "fieldConfig": {"defaults": {"unit": "short", "noValue": "Unknown"}}},
+    {"id": 9, "type": "stat", "title": "Observation success", "gridPos": {"x": 18, "y": 8, "w": 6, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "market_pulse_observation_success"}], "fieldConfig": {"defaults": {"unit": "short", "noValue": "Unknown"}}},
+    {"id": 14, "type": "stat", "title": "Bronze ingestion age", "gridPos": {"x": 0, "y": 14, "w": 8, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "time() - market_pulse_bronze_latest_ingestion_timestamp_seconds"}], "fieldConfig": {"defaults": {"unit": "s", "noValue": "Unknown"}}},
+    {"id": 15, "type": "stat", "title": "Scheduler heartbeat count", "gridPos": {"x": 8, "y": 14, "w": 8, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "market_pulse_airflow_scheduler_heartbeat_total"}], "fieldConfig": {"defaults": {"unit": "short", "noValue": "No heartbeat"}}},
+    {"id": 10, "type": "row", "title": "Iceberg lifecycle", "gridPos": {"x": 0, "y": 20, "w": 24, "h": 1}},
+    {"id": 11, "type": "stat", "title": "Bronze snapshots", "gridPos": {"x": 0, "y": 21, "w": 8, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "market_pulse_iceberg_snapshot_count"}], "fieldConfig": {"defaults": {"unit": "short", "noValue": "Unknown"}}},
+    {"id": 12, "type": "stat", "title": "Latest snapshot age", "gridPos": {"x": 8, "y": 21, "w": 8, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "time() - market_pulse_iceberg_latest_snapshot_timestamp_seconds"}], "fieldConfig": {"defaults": {"unit": "s", "noValue": "Unknown"}}},
+    {"id": 13, "type": "stat", "title": "Last warehouse observation", "gridPos": {"x": 16, "y": 21, "w": 8, "h": 6}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "targets": [{"refId": "A", "expr": "market_pulse_observation_last_success_timestamp_seconds * 1000"}], "fieldConfig": {"defaults": {"unit": "dateTimeAsIso", "noValue": "Never succeeded"}}}
+  ]
+}

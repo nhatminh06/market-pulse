@@ -1,0 +1,23 @@
+groups:
+  - name: market-pulse
+    rules:
+      - alert: MarketPulseExporterDown
+        expr: up{job="warehouse"} == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Warehouse exporter is unavailable"}
+      - alert: MarketPulseObservationFailed
+        expr: market_pulse_observation_success == 0
+        for: 15m
+        labels: {severity: warning}
+        annotations: {summary: "Warehouse observation is failing"}
+      - alert: AirflowTaskFailed
+        expr: increase(airflow_task_failures_total[15m]) > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "An Airflow task failed"}
+      - alert: MarketPulseBronzeStale
+        expr: market_pulse_live_feed_expected == 1 and (time() - market_pulse_bronze_latest_ingestion_timestamp_seconds > 604800)
+        for: 30m
+        labels: {severity: warning}
+        annotations: {summary: "No Bronze ingestion commit for seven days"}

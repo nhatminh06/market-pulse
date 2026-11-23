@@ -1,0 +1,17 @@
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="warehouse"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MarketPulseExporterDown
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MarketPulseExporterDown
+        exp_alerts:
+          - exp_labels: {job: warehouse, severity: warning}
+            exp_annotations: {summary: "Warehouse exporter is unavailable"}
