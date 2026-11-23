@@ -6,11 +6,24 @@ The inventory command reads only catalog metadata and manifest files for four
 allowlisted pipeline tables. It cannot expire snapshots, delete objects, or
 change table metadata. Local disposable SQL-catalog tests verify inventory,
 time travel, recovery by a new commit, and schema evolution with PyIceberg
-0.7.1. REST/MinIO/Trino qualification is prepared in `e2e.yml` but has not
-run for this branch. The current Compose file uses `trinodb/trino:latest`;
-the prior E2E log shows that tag was pulled but does not record a version or
-digest. Record `SELECT node_version FROM system.runtime.nodes LIMIT 1` in the
-new E2E before assigning version-specific Trino capabilities to that run.
+0.7.1. The first [REST/MinIO/Trino E2E run](https://github.com/nhatminh06/market-pulse/actions/runs/45229122301)
+at commit `8d00c979732f55071d8c3aac967e791df79f946f` failed in the new
+lifecycle step at its final Trino row assertion. Its log recorded Trino 484
+(`trinodb/trino@sha256:2704eb53935af5e582d63d6033e9bf99d20c325e9b0e30b1016ef59a4773979f`),
+Iceberg REST image
+`apache/iceberg-rest-fixture@sha256:009f9f6897cc1e8fd6e8133c401c7a3e7c333c71293a621d06a71570ae989c29`,
+PyIceberg 0.7.1, and Iceberg table format v2. The Compose tags still float;
+these digests describe that run, not a repository pin.
+
+The run passed image pulls, MinIO startup, Terraform, REST/Trino startup,
+existing M1 fixture ingestion, and atomic correction. The disposable test
+printed JSON and text inventory of three snapshots with readable manifests,
+file counts, and sizes. It reached the post-evolution Trino query, but the
+assertion did not print the returned rows. That assertion now normalizes the
+driver's row shape and displays a mismatch. The failed run skipped dbt and
+Gold checks; stack teardown passed. Its in-script cleanup had no reported
+error, but resource absence was not separately asserted after failure.
+Real-stack M2 qualification remains pending a successful follow-up run.
 
 ## Inspect a table
 
@@ -56,8 +69,8 @@ multiple snapshots under one catalog commit; inspect all summaries for the ID.
    point and requires deliberate key scoping. Do not use it as an automatic
    production rollback recipe.
 
-The qualified Trino version may support `rollback_to_snapshot`; this remains
-unverified for this repository. No workflow calls it. A missing or expired
+Trino 484 documents `rollback_to_snapshot`, but this workflow has not called
+it. A missing or expired
 snapshot cannot be recovered by time travel alone; restore from a verified
 external backup only after identifying the affected files and metadata.
 
@@ -91,7 +104,8 @@ cleanup is scheduled or executed in M2.
 The local disposable test verifies adding a nullable column, reading old rows
 as null, appending new rows, widening `int` to `long`, rejecting an incompatible
 `long` to `string` change, and preserving existing field IDs. The new E2E step
-will check REST/Trino visibility. No Bronze, Silver, or Gold schema changes are
+reaches a REST/Trino schema query, but its final row assertion did not pass in
+the first run. No Bronze, Silver, or Gold schema changes are
 made. Before a real Bronze change, review `stg_prices.sql` and dependent dbt
 models and tests, then qualify the migration against the real stack. A new
 Bronze column does not automatically become part of Silver or Gold.

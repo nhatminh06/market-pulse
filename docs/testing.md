@@ -1,5 +1,16 @@
 # Testing
 
+## V2-M2 lifecycle qualification (pending)
+
+The first [M2 branch E2E run 45229122301](https://github.com/nhatminh06/market-pulse/actions/runs/45229122301)
+at `8d00c979732f55071d8c3aac967e791df79f946f` passed the existing M1
+fixture and atomic-ingestion steps but failed in the new disposable lifecycle
+step at its final Trino row assertion. The run recorded Trino 484, PyIceberg
+0.7.1, and a format-v2 disposable table. Inventory JSON and text were emitted;
+dbt and Gold checks were skipped after the failure. Stack teardown passed.
+The detailed evidence and limits are in [Iceberg operations](iceberg-operations.md).
+M2 requires a fresh successful real-stack run before it can pass.
+
 ## V2-M1 atomic ingestion (verified 2026-11-23)
 
 `tests/unit/test_incremental_ingestion.py` models staging, atomic publication,

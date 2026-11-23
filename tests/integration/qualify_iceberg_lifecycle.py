@@ -92,7 +92,8 @@ def main() -> None:
         else:
             raise AssertionError("Incompatible schema change was accepted")
         cursor.execute(f"SELECT ticker, source_note FROM iceberg.{namespace}.prices ORDER BY ticker")
-        assert cursor.fetchall() == [("AAPL", None), ("GOOG", "fixture"), ("MSFT", None)]
+        observed = [tuple(row) for row in cursor.fetchall()]
+        assert observed == [("AAPL", None), ("GOOG", "fixture"), ("MSFT", None)], observed
         cursor.execute("SELECT column_name, data_type FROM iceberg.information_schema.columns "
                        f"WHERE table_schema = '{namespace}' AND table_name = 'prices'")
         types = dict(cursor.fetchall())
@@ -112,12 +113,13 @@ def main() -> None:
                 print(f"Disposable resource cleanup failed: {exc}", file=sys.stderr)
         if original_error is None and cleanup_error is not None:
             raise cleanup_error
+        if cleanup_error is None:
+            print(f"Disposable lifecycle table and namespace removed: {identifier}")
         if original_error is None:
             assert not cat.table_exists(identifier)
             bronze_after = cat.load_table("bronze.prices")
             assert bronze_after.current_snapshot().snapshot_id == bronze_snapshot
             assert bronze_after.scan().to_arrow().to_pylist() == bronze_rows
-            print(f"Disposable lifecycle table and namespace removed: {identifier}")
             print("Persistent Bronze snapshot and rows unchanged")
 
 
