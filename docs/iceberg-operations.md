@@ -6,24 +6,38 @@ The inventory command reads only catalog metadata and manifest files for four
 allowlisted pipeline tables. It cannot expire snapshots, delete objects, or
 change table metadata. Local disposable SQL-catalog tests verify inventory,
 time travel, recovery by a new commit, and schema evolution with PyIceberg
-0.7.1. The first [REST/MinIO/Trino E2E run](https://github.com/nhatminh06/market-pulse/actions/runs/45229122301)
-at commit `8d00c979732f55071d8c3aac967e791df79f946f` failed in the new
-lifecycle step at its final Trino row assertion. Its log recorded Trino 484
+0.7.1. The [successful REST/MinIO/Trino E2E run 45232058559](https://github.com/nhatminh06/market-pulse/actions/runs/45232058559)
+tested commit `2a233ac88621b0ace95560844eb2d15e04d0f2df`. It recorded Trino 484
 (`trinodb/trino@sha256:2704eb53935af5e582d63d6033e9bf99d20c325e9b0e30b1016ef59a4773979f`),
 Iceberg REST image
 `apache/iceberg-rest-fixture@sha256:009f9f6897cc1e8fd6e8133c401c7a3e7c333c71293a621d06a71570ae989c29`,
 PyIceberg 0.7.1, and Iceberg table format v2. The Compose tags still float;
-these digests describe that run, not a repository pin.
+these digests describe the successful run, not a repository pin.
 
 The run passed image pulls, MinIO startup, Terraform, REST/Trino startup,
-existing M1 fixture ingestion, and atomic correction. The disposable test
-printed JSON and text inventory of three snapshots with readable manifests,
-file counts, and sizes. It reached the post-evolution Trino query, but the
-assertion did not print the returned rows. That assertion now normalizes the
-driver's row shape and displays a mismatch. The failed run skipped dbt and
-Gold checks; stack teardown passed. Its in-script cleanup had no reported
-error, but resource absence was not separately asserted after failure.
-Real-stack M2 qualification remains pending a successful follow-up run.
+existing M1 fixture ingestion and atomic correction, the disposable lifecycle
+step, dbt `PASS=21 WARN=0 ERROR=0 SKIP=0 TOTAL=21`, all four Gold quality
+checks, corrected Gold data through Trino, a representative Trino query, and
+stack/volume teardown. The disposable table
+`lifecycle_m2_5f9ce1d29b7d4f6cb86cb42666c07f6a.prices` emitted JSON and
+text inventory of three snapshots (initial append, staged correction overwrite,
+correction append), including parent IDs, manifests, file counts, and sizes.
+Snapshot `6343013370973740778` preserved the initial values. The test read
+that snapshot through PyIceberg and Trino, restored AAPL's price with a new
+commit, and asserted the current AAPL/MSFT values through Trino. It then
+verified a nullable column, old-row nulls, a new row, `int` to `long`
+widening, rejection of `long` to `string`, and field-ID preservation. Trino
+asserted post-evolution rows `(AAPL, NULL)`, `(GOOG, fixture)`, and
+`(MSFT, NULL)` and schema types `source_note=varchar`, `volume=bigint`;
+these values were asserted in the passing step, not printed individually.
+Cleanup returned successfully, the table-absence assertion passed, and the
+Bronze snapshot ID and rows matched their pre-test values. Namespace drop
+returned successfully but had no separate existence lookup.
+
+The earlier [failed run 45229122301](https://github.com/nhatminh06/market-pulse/actions/runs/45229122301)
+tested `8d00c979732f55071d8c3aac967e791df79f946f`; it stopped at a
+Trino row assertion that compared driver rows without normalizing their shape.
+Its dbt and Gold steps were skipped. It remains historical failure evidence.
 
 ## Inspect a table
 
@@ -101,12 +115,11 @@ cleanup is scheduled or executed in M2.
 
 ## Schema evolution
 
-The local disposable test verifies adding a nullable column, reading old rows
-as null, appending new rows, widening `int` to `long`, rejecting an incompatible
-`long` to `string` change, and preserving existing field IDs. The new E2E step
-reaches a REST/Trino schema query, but its final row assertion did not pass in
-the first run. No Bronze, Silver, or Gold schema changes are
-made. Before a real Bronze change, review `stg_prices.sql` and dependent dbt
+The local and successful REST/Trino disposable tests verify adding a nullable
+column, reading old rows as null, appending new rows, widening `int` to `long`,
+rejecting an incompatible `long` to `string` change, and preserving existing
+field IDs. No Bronze, Silver, or Gold schema changes were made. Before a real
+Bronze change, review `stg_prices.sql` and dependent dbt
 models and tests, then qualify the migration against the real stack. A new
 Bronze column does not automatically become part of Silver or Gold.
 
@@ -114,7 +127,7 @@ Bronze column does not automatically become part of Silver or Gold.
 
 ```bash
 python -m pytest tests/integration/test_iceberg_lifecycle_catalog.py -q
-# Once this branch is pushed and approved for a remote run:
+# To repeat the manually dispatched full-stack qualification when authorized:
 gh workflow run e2e.yml --ref feature/v2-iceberg-lifecycle
 ```
 
