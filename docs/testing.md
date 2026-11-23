@@ -1,5 +1,52 @@
 # Testing
 
+## M1 image recovery proposal (2026-11-23)
+
+The October 5, 2026 scheduled E2E run failed at `Start MinIO` while pulling
+`minio/mc:latest`. Both official Docker Hub image repositories were withdrawn;
+reports also show anonymous Quay pulls failing. The proposed Compose change
+uses `ghcr.io/intikhab49/minio-from-source@sha256:1025a6dd8452e6fe8d3fdf16dbce7c18f8417acd22e5abd7376d8322aee5edab` for
+both services. Its [published Dockerfile](https://github.com/intikhab49/minio-from-source/blob/main/Dockerfile)
+builds MinIO server from upstream commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`
+and `mc` from `7394ce0dd2a80935aded936b09fa12cbb3cb8096`, and includes
+`sh` and `curl`. The publisher documents `linux/amd64` and `linux/arm64` builds
+and a storage round-trip smoke test. The [upstream server release](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z)
+contains a session-policy security fix. This is an unofficial, source-built
+image; upstream MinIO community source is archived, so future security fixes
+are not assured. The [public GHCR package page](https://github.com/intikhab49/minio-from-source/pkgs/container/minio-from-source)
+lists this digest for the release, but anonymous pull remains **unverified**
+until a fresh GitHub Actions run succeeds.
+
+The server command, S3 endpoint, root credentials, and Terraform bucket/user
+provisioning stay the same. The image includes `mc`, so the existing `mc-init`
+alias command still applies. The server health check uses the image's bundled
+`curl`. It runs as root to retain access to volumes created by the former
+root-running image; this retains the former local permission model.
+S3, Terraform, PyIceberg, and Trino compatibility remain integration checks,
+not conclusions from the image's registry page.
+
+Rejected candidates: the deleted Docker Hub images cannot be pulled; Quay
+cannot be assumed public; frozen third-party mirrors of the last official
+image predate the October 2025 security fix; SILO is a maintained fork but
+changes the storage implementation and needs broader compatibility testing.
+
+To verify on a temporary branch after approval:
+
+```bash
+gh workflow run e2e.yml --ref fix/market-pulse-e2e-images
+gh run list --workflow e2e.yml --branch fix/market-pulse-e2e-images --limit 1
+# Use the run ID from the previous command:
+gh run watch RUN_ID --exit-status
+gh run view RUN_ID --log-failed
+```
+
+The E2E workflow now pulls the image and checks its Linux architecture, binary
+versions, and required tools before building the stack. Its existing steps
+then test MinIO startup, Terraform, fixture ingestion, dbt, the gold quality
+gate, a Trino query, failure logs, and teardown. A successful fresh run is
+required before marking M1 complete. Other floating image tags in Compose
+remain a reproducibility risk; they are outside this image recovery.
+
 ## What runs where
 
 | Layer | Tool | Runs in PR CI? | Runs in scheduled/manual E2E? |
