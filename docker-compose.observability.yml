@@ -3,20 +3,39 @@ services:
   statsd-exporter:
     image: prom/statsd-exporter:latest
     container_name: mp-statsd
-    ports: ["9102:9102", "9125:9125/udp"]
+    command: ["--statsd.mapping-config=/etc/statsd/mappings.yml"]
+    volumes: ["./observability/statsd-mappings.yml:/etc/statsd/mappings.yml:ro"]
+    expose: ["9102", "9125/udp"]
+
+  warehouse-exporter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mp-warehouse-exporter
+    command: ["python", "/opt/airflow/observability/warehouse_exporter.py"]
+    volumes: ["./observability:/opt/airflow/observability:ro"]
+    expose: ["9103"]
+    environment:
+      PYTHONPATH: /opt/airflow
+      MARKET_PULSE_LIVE_FEED_EXPECTED: ${MARKET_PULSE_LIVE_FEED_EXPECTED:-0}
 
   prometheus:
     image: prom/prometheus:latest
     container_name: mp-prometheus
-    ports: ["9090:9090"]
-    volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml"]
+    ports: ["127.0.0.1:9090:9090"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
 
   grafana:
     image: grafana/grafana:latest
     container_name: mp-grafana
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./observability/grafana:/etc/grafana/provisioning:ro
+      - ./observability/grafana/json:/var/lib/grafana/dashboards:ro
 
 networks:
   default:

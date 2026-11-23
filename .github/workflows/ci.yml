@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install ruff
-      - run: ruff check ingestion quality tests
+      - run: ruff check ingestion quality observability tests
 
   python-tests:
     runs-on: ubuntu-latest
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - run: pip install pytest pandas pyarrow "sqlalchemy>=2,<3" "yfinance==0.2.*" "pyiceberg[s3fs,pyarrow]==0.7.1" trino
+      - run: pip install pytest pyyaml pandas pyarrow "sqlalchemy>=2,<3" "yfinance==0.2.*" "pyiceberg[s3fs,pyarrow]==0.7.1" trino
       # Uses fixtures and a local SQLite Iceberg catalog; no live Trino/MinIO/REST stack.
       - run: pytest tests/ -v
 
@@ -94,6 +94,8 @@ jobs:
       - run: cp .env.example .env
       - run: docker compose -f docker-compose.yaml config --quiet
       - run: docker compose -f docker-compose.observability.yml config --quiet
+      - run: docker run --rm --entrypoint promtool -v "$PWD/observability:/etc/prometheus:ro" prom/prometheus:latest check config /etc/prometheus/prometheus.yml
+      - run: docker run --rm --entrypoint promtool -v "$PWD/observability:/etc/prometheus:ro" prom/prometheus:latest test rules /etc/prometheus/alert-tests.yml
 
   yaml-lint:
     runs-on: ubuntu-latest
@@ -104,7 +106,7 @@ jobs:
       - run: pip install yamllint
       - run: |
           yamllint -d "{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable, braces: disable}}" \
-            .github/workflows docker-compose.yaml docker-compose.observability.yml
+            .github/workflows docker-compose.yaml docker-compose.observability.yml observability/*.yml observability/grafana
 
   actionlint:
     runs-on: ubuntu-latest

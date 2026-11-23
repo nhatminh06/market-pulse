@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: Market Pulse
+    orgId: 1
+    folder: Market Pulse
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

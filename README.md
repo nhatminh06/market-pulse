@@ -39,7 +39,7 @@ dbt-trino SQL, orchestrated daily by Airflow.
 - **Terraform-provisioned MinIO** — a single bucket and an IAM policy scoped to only that bucket's ARNs.
 - **CI on every PR**: Python lint + tests, Terraform fmt/init/validate, dbt parse + SQLFluff, Airflow DAG import/structure check, `docker compose config`, YAML lint, and `actionlint` — 8 jobs, all static/fixture-based, no live stack required (see Testing below for what CI does *not* cover).
 - **A manual/weekly E2E workflow** that boots the real stack and runs `dbt build`/`dbt test`/the quality gate against live Trino — see Testing.
-- Optional Prometheus + Grafana observability profile (metrics-only scaffold today — see Known limitations).
+- Optional Prometheus + Grafana observability stack with a read-only warehouse exporter (see [observability guide](docs/observability.md)).
 
 ---
 
@@ -124,6 +124,7 @@ open http://localhost:8080   # Trino
 docker compose -f docker-compose.observability.yml up -d
 open http://localhost:3000   # Grafana (admin / admin)
 ```
+See [observability setup and freshness semantics](docs/observability.md). Set a non-default `GRAFANA_ADMIN_PASSWORD` before using Grafana outside a disposable local demo.
 
 ### Teardown
 ```bash
@@ -190,7 +191,7 @@ a 20-ticker universe) — not a claim that any option is universally superior.
 - Live ingestion depends on yfinance, an unofficial free feed with no uptime or accuracy guarantee; data can be delayed, incomplete, or revised.
 - Local Docker Compose is a single-node demo environment, not a production cluster — no hard resource limits are set on any service (only guidance, see Prerequisites). Health checks now exist for every service, but MinIO/Postgres/Trino are the only ones confirmed working against a live container (via the verified E2E run); Iceberg REST, the Airflow API server, and Superset's health checks are best-effort and documented as unverified in `docker-compose.yaml` — nothing else's startup depends on them, so a wrong assumption there shows as "unhealthy" in `docker compose ps`, not a blocked stack.
 - Default local credentials (`minioadmin`/`minioadmin`, `admin`/`admin`, Postgres `airflow`/`airflow`) are safe only because nothing is exposed beyond `localhost` — see `.env.example` before running anything reachable from outside your machine.
-- Grafana comes up with only a Prometheus datasource wired via `docker-compose.observability.yml`; no pre-built dashboards are provisioned yet.
+- The optional monitoring stack provisions a dashboard and local alert rules; live-stack qualification of the M3 implementation is pending.
 - The manual/scheduled E2E workflow (`.github/workflows/e2e.yml`) passed most recently on the fix branch ([run 45209879444](https://github.com/nhatminh06/market-pulse/actions/runs/45209879444), 2026-11-23); the [August 6 run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) is historical evidence. Check each subsequent run rather than assuming it passes on every commit.
 - Benchmark numbers are hardware- and dataset-dependent and not yet produced — see Benchmarks above.
 
