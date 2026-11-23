@@ -1,5 +1,5 @@
 """Pull daily OHLCV from Yahoo (yfinance) and land it raw into bronze.prices (Iceberg).
-Backfill mode (default): full history. Incremental: pass --days N for a daily append.
+Backfill mode (default): full history. Incremental: pass --days N for a daily replacement.
 
 Split into testable stages so unit tests don't need network access or a live
 Iceberg/MinIO stack:
@@ -16,15 +16,20 @@ import argparse
 import csv
 import logging
 import os
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
 import yfinance as yf
 from pyiceberg.catalog import Catalog, load_catalog
-from pyiceberg.exceptions import NoSuchTableError
-from pyiceberg.expressions import And, GreaterThanOrEqual, In
+from pyiceberg.exceptions import (
+    CommitFailedException,
+    NoSuchTableError,
+    TableAlreadyExistsError,
+)
+from pyiceberg.expressions import And, In, Or
 
 # Avoid SQLite lock contention from yfinance's on-disk cache when fetching
 # multiple tickers concurrently inside a container — /tmp is always writable
@@ -42,6 +47,12 @@ REQUIRED_COLUMNS = ["ticker", "date", "open", "high", "low", "close", "adj_close
 BRONZE_COLUMNS = REQUIRED_COLUMNS + ["_ingested_at"]
 
 logger = logging.getLogger(__name__)
+# shortcut: cap exact-key predicates here; plan an explicit backfill strategy if this limit is reached.
+MAX_FILTER_LITERALS = 10000
+
+
+class CommitOutcomeUnknownError(RuntimeError):
+    """The catalog may have committed; investigate before another write."""
 
 
 def load_tickers(path: Path = TICKER_SECTOR_MAP_PATH) -> list[str]:
@@ -156,9 +167,7 @@ def validate_ohlcv_frame(df: pd.DataFrame) -> pd.DataFrame:
 
 def deduplicate_prices(df: pd.DataFrame) -> pd.DataFrame:
     """Collapse duplicate (ticker, date) rows within a single fetched batch,
-    keeping the most recently ingested one. Cross-batch/rerun duplicates are
-    handled separately by write_bronze_table's delete-then-append and by the
-    silver dbt model's merge; this only protects a single fetch() call."""
+    keeping the most recently ingested one. Atomic replacement handles reruns."""
     if df.empty:
         return df
     return (
@@ -189,21 +198,97 @@ def get_catalog() -> Catalog:
     })
 
 
+def _replacement_filter(df: pd.DataFrame):
+    """Group exact returned keys by shared ticker coverage to bound expression size."""
+    dates_by_ticker = {ticker: frozenset(rows["date"].map(str)) for ticker, rows in df.groupby("ticker")}
+    tickers_by_date = {str(day): frozenset(rows["ticker"]) for day, rows in df.groupby("date")}
+
+    def grouped_keys(mapping):
+        groups = {}
+        for first, seconds in mapping.items():
+            groups.setdefault(seconds, []).append(first)
+        cost = sum(len(firsts) + len(seconds) for seconds, firsts in groups.items())
+        return cost, groups
+
+    by_ticker = grouped_keys(dates_by_ticker)
+    by_date = grouped_keys(tickers_by_date)
+    use_date_first = by_date[0] < by_ticker[0]
+    cost, groups = by_date if use_date_first else by_ticker
+    if cost > MAX_FILTER_LITERALS:
+        raise ValueError(f"Exact-key filter needs {cost} literals (limit {MAX_FILTER_LITERALS}); split the backfill explicitly")
+    first_column, second_column = ("date", "ticker") if use_date_first else ("ticker", "date")
+    predicates = [
+        And(In(first_column, sorted(firsts)), In(second_column, sorted(seconds)))
+        for seconds, firsts in groups.items()
+    ]
+    while len(predicates) > 1:
+        predicates = [Or(predicates[i], predicates[i + 1]) if i + 1 < len(predicates) else predicates[i]
+                      for i in range(0, len(predicates), 2)]
+    return predicates[0]
+
+
+def _committed_batch_matches(cat: Catalog, df: pd.DataFrame, predicate, run_id: str) -> bool:
+    """Read the catalog's current published state after an uncertain acknowledgement."""
+    table = cat.load_table("bronze.prices")
+    if not any(snapshot.summary.model_dump().get("market_pulse_run_id") == run_id
+               for snapshot in table.metadata.snapshots):
+        return False
+    current = table.scan(row_filter=predicate).to_arrow().to_pylist()
+    expected = pa.Table.from_pandas(df, preserve_index=False).to_pylist()
+    key = lambda row: (row["ticker"], row["date"])
+    return sorted(current, key=key) == sorted(expected, key=key)
+
+
 def write_bronze_table(cat: Catalog, df: pd.DataFrame, requested_tickers: list[str], start: str) -> int:
-    """Delete-then-append into bronze.prices, scoped to the tickers/date range
-    just fetched, so reruns of the same window are idempotent at the bronze
-    layer (no duplicate ticker/date rows survive a rerun covering the same
-    range). Reruns with a different --start/--tickers window are NOT
-    deduplicated against unrelated prior data by this function alone — the
-    silver layer's merge on (ticker, trade_date) is the final guarantee."""
+    """Atomically replace only valid returned ticker/date keys in bronze.prices."""
+    if not set(BRONZE_COLUMNS).issubset(df.columns):
+        raise ValueError(f"Missing bronze columns: {sorted(set(BRONZE_COLUMNS) - set(df.columns))}")
+    if df.empty:
+        logger.warning("coverage status=empty returned_tickers=[] valid_rows=0")
+        return 0
+    df = df[BRONZE_COLUMNS].copy()
+    df["ticker"] = df["ticker"].astype("string").str.strip().str.upper()
+    df["date"] = pd.to_datetime(df["date"], errors="raise").dt.date
+    if df["_ingested_at"].isna().any() or len(validate_ohlcv_frame(df)) != len(df):
+        raise ValueError("Invalid Bronze row; no data was written")
+    permitted = {ticker.strip().upper() for ticker in requested_tickers}
+    start_date = date.fromisoformat(start)
+    if not set(df["ticker"]).issubset(permitted) or (df["date"] < start_date).any():
+        raise ValueError("Returned key outside requested ticker/date scope")
+    df = deduplicate_prices(df)
+    predicate = _replacement_filter(df)
     arrow = pa.Table.from_pandas(df, preserve_index=False)
+    returned = sorted(set(df["ticker"]))
+    run_id = uuid.uuid4().hex
+    logger.info("coverage status=%s requested_tickers=%s returned_tickers=%s valid_rows=%d",
+                "partial" if set(returned) != permitted else "returned", sorted(permitted), returned, len(df))
+    logger.info("coverage rows_by_ticker=%s date_span_by_ticker=%s",
+                df.groupby("ticker").size().to_dict(),
+                {ticker: (str(rows["date"].min()), str(rows["date"].max()))
+                 for ticker, rows in df.groupby("ticker")})
+    logger.info("ingestion_run_id=%s replacement_keys=%d", run_id, len(df))
     cat.create_namespace_if_not_exists("bronze")
     try:
         table = cat.load_table("bronze.prices")
-        table.delete(And(GreaterThanOrEqual("date", start), In("ticker", requested_tickers)))
     except NoSuchTableError:
-        table = cat.create_table("bronze.prices", schema=arrow.schema)
-    table.append(arrow)
+        try:
+            table = cat.create_table("bronze.prices", schema=arrow.schema)
+        except TableAlreadyExistsError:
+            table = cat.load_table("bronze.prices")
+    tx = table.transaction()
+    tx.overwrite(arrow, overwrite_filter=predicate, snapshot_properties={"market_pulse_run_id": run_id})
+    try:
+        tx.commit_transaction()
+    except CommitFailedException:
+        raise  # A known catalog conflict needs a fresh read and a new attempt.
+    except Exception as exc:
+        try:
+            if _committed_batch_matches(cat, df, predicate, run_id):
+                logger.warning("Catalog acknowledgement failed but committed rows match the prepared batch: %s", exc)
+                return arrow.num_rows
+        except Exception as read_exc:
+            raise CommitOutcomeUnknownError("Cannot read back uncertain Iceberg commit; do not retry automatically") from read_exc
+        raise CommitOutcomeUnknownError("Iceberg commit outcome is uncertain and current rows differ; investigate before retry") from exc
     return arrow.num_rows
 
 
@@ -228,7 +313,7 @@ def main() -> None:
 
     cat = get_catalog()
     n_rows = write_bronze_table(cat, df, tickers, start)
-    logger.info("Appended %d rows to bronze.prices", n_rows)
+    logger.info("Committed %d rows to bronze.prices", n_rows)
 
 
 if __name__ == "__main__":

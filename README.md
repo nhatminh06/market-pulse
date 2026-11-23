@@ -30,12 +30,12 @@ dbt-trino SQL, orchestrated daily by Airflow.
 
 ## Key capabilities
 
-- **Incremental + backfill ingestion** — `ingestion/ingest_bronze.py --start` for a full history pull, `--days N` for a daily incremental run; delete-and-replace-partition write pattern scoped to the exact ticker/date window fetched (see `docs/data-model.md` for the precise idempotency guarantee).
+- **Incremental + backfill ingestion** — `ingestion/ingest_bronze.py --start` for a full history pull, `--days N` for a daily incremental run; an atomic Iceberg transaction replaces only returned ticker/date keys (see `docs/data-model.md`).
 - **Iceberg-backed storage on MinIO** — ACID writes, schema evolution, time travel, all via MinIO's open-source S3-compatible API (no cloud storage account required for local development).
 - **dbt-trino bronze → silver → gold** — silver is `materialized='incremental'`; gold recomputes rolling windows as a full table. 16 dbt tests across `not_null`, `unique`, `relationships`, `accepted_values`, `dbt_utils.unique_combination_of_columns`, and a custom `low <= high` expression test.
-- **Airflow 3.x (LocalExecutor)** orchestration — `ingest_bronze → dbt_build → validate_gold`, with retries and optional Slack failure alerting (silently skipped, not failed, if no webhook is configured).
+- **Airflow 3.x (LocalExecutor)** orchestration — `ingest_bronze → dbt_build → validate_gold`, with retries on downstream tasks and optional Slack failure alerting (silently skipped, not failed, if no webhook is configured). An unresolved ingestion commit needs operator review.
 - **A Python data-quality gate** (`quality/validate_gold.py`) with its check-interpretation logic unit-tested independent of a live warehouse.
-- **55 pytest tests** covering ingestion schema/dedup/incremental-idempotency logic and the gold-layer formulas as pandas parity tests (no network, no live services — see `docs/testing.md` for exactly what is and isn't covered this way).
+- **Pytest coverage** for ingestion, a local Iceberg catalog, and gold-layer formulas (no live REST/MinIO/Trino in PR CI — see `docs/testing.md`).
 - **Terraform-provisioned MinIO** — a single bucket and an IAM policy scoped to only that bucket's ARNs.
 - **CI on every PR**: Python lint + tests, Terraform fmt/init/validate, dbt parse + SQLFluff, Airflow DAG import/structure check, `docker compose config`, YAML lint, and `actionlint` — 8 jobs, all static/fixture-based, no live stack required (see Testing below for what CI does *not* cover).
 - **A manual/weekly E2E workflow** that boots the real stack and runs `dbt build`/`dbt test`/the quality gate against live Trino — see Testing.
@@ -47,7 +47,7 @@ dbt-trino SQL, orchestrated daily by Airflow.
 
 | Layer | Table | Write pattern | Current-state grain | Materialization |
 |---|---|---|---|---|
-| Bronze | `bronze.prices` | delete rows in the fetched ticker/date window, then append the replacement batch (not blind append — see `docs/data-model.md`) | one row per (ticker, date) within any window that's been (re)fetched | Iceberg table |
+| Bronze | `bronze.prices` | atomically replace returned ticker/date keys (see `docs/data-model.md`) | one current row per key written by this ingester | Iceberg table |
 | Silver | `silver.stg_prices` | incremental merge on (ticker, trade_date) | one row per (ticker, trade_date) | incremental (merge) |
 | Gold | `gold.fct_daily_metrics` | full rebuild each run | one row per (ticker, trade_date) | table |
 | Gold | `gold.dim_ticker` | full rebuild each run | one row per ticker | seed-joined |
@@ -69,9 +69,9 @@ formulas behind returns/SMA/volatility/anomaly detection are in
 ```bash
 git clone https://github.com/nhatminh06/market-pulse.git
 cd market-pulse
-pip install pytest ruff pandas pyarrow "pyiceberg[s3fs,pyarrow]==0.7.*" "yfinance==0.2.*" trino
+pip install pytest ruff pandas pyarrow "sqlalchemy>=2,<3" "pyiceberg[s3fs,pyarrow]==0.7.1" "yfinance==0.2.*" trino
 make lint    # ruff + sqlfluff
-make test    # 55 pytest tests, no network/services needed
+make test    # pytest, including a local Iceberg catalog; no live stack needed
 ```
 
 ### 2. Full local stack

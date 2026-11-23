@@ -1,5 +1,31 @@
 # Testing
 
+## V2-M1 atomic ingestion (awaiting branch E2E)
+
+`tests/unit/test_incremental_ingestion.py` models staging, atomic publication,
+known conflicts, incomplete provider coverage, retries, invalid batches, and
+uncertain acknowledgements. `tests/integration/test_atomic_bronze_catalog.py`
+uses PyIceberg 0.7.1 with a real local SQLite Iceberg catalog and file
+warehouse; it checks unpublished staging, stale-writer rejection, exact-key
+corrections, and recovery after a committed write loses its acknowledgement.
+PR CI installs SQLAlchemy to run this test. Neither test substitutes for the
+MinIO/REST/Trino stack.
+
+The manual/weekly `e2e.yml` now stages an abandoned correction, then writes
+one corrected fixture row while requesting both AAPL and MSFT. It checks
+that all other Bronze rows survive, that keys are unique, and that a stale
+second REST-catalog writer is rejected. It then runs the
+existing dbt build, Gold quality gate, Trino query, and teardown. This new
+step has **not** been run on GitHub yet. Run it once on the feature branch
+after review; retain the run URL and exact results before claiming M1 PASS.
+No live yfinance data or production credentials are needed.
+
+For an unresolved `CommitOutcomeUnknownError`, do not immediately rerun the
+Airflow task. Inspect the logged `ingestion_run_id`, Iceberg snapshot summaries,
+and current rows for the returned keys. An automatic ingestion retry is
+disabled to avoid writing again while the previous commit outcome is unknown.
+Other DAG tasks retain their existing retry policy.
+
 ## M1 image recovery (verified 2026-11-23)
 
 The October 5, 2026 scheduled E2E run failed at `Start MinIO` while pulling

@@ -4,39 +4,52 @@
 
 | Layer | Table | Grain | Key | Materialization | Partitioning |
 |---|---|---|---|---|---|
-| Bronze | `bronze.prices` | one row per (ticker, date) within any window that's been (re)fetched | none enforced (raw landing zone) | Iceberg table, delete-scoped-window-then-append | `ticker` |
+| Bronze | `bronze.prices` | one row per (ticker, date) within any window that's been (re)fetched | none enforced (raw landing zone) | Iceberg table, exact-key transaction overwrite | `ticker` |
 | Silver | `silver.stg_prices` | one row per (ticker, trade_date) | `(ticker, trade_date)`, enforced by `dbt_utils.unique_combination_of_columns` | table | `ticker` |
 | Gold | `gold.fct_daily_metrics` | one row per (ticker, trade_date) | `(ticker, trade_date)`, enforced by `dbt_utils.unique_combination_of_columns` | table | `ticker` |
 | Gold | `gold.dim_ticker` | one row per ticker | `ticker`, enforced by `unique` | seed-joined view | n/a |
 
 ## Bronze: `bronze.prices`
 
-Raw landing zone. Bronze is **not append-only** — it is not correct to
-describe it that way, and earlier versions of this document did. The
-actual write pattern, in `ingestion/ingest_bronze.py:write_bronze_table`,
-has three distinct aspects worth separating:
+Raw landing zone. Bronze is **not append-only**. `write_bronze_table` validates
+and deduplicates the returned batch, then builds a predicate for exactly those
+`(ticker, date)` keys. It stages a PyIceberg 0.7.1 filtered overwrite and
+explicitly commits the transaction. Delete/rewrite and append may create
+multiple staged Iceberg snapshots, but one catalog metadata commit publishes
+the final state; a failed pre-commit stage leaves the previous table visible.
+The code does not use PyIceberg 0.7.1's transaction context manager because its
+`__exit__` commits even after an exception in the body.
 
-- **Physical write behavior:** each run deletes any existing rows matching
-  the exact (ticker, date) window it's about to write (`date >= start AND
-  ticker IN requested_tickers`), then appends the freshly fetched batch.
-  This is a delete-scoped-window-then-append pattern, not a blind append
-  and not a full merge/upsert against the whole table.
-- **Logical grain (current table state):** one row per (ticker, date) for
-  any window that has ever been fetched, since a rerun of the *same*
-  window replaces it rather than duplicating it. A rerun with a
-  *different* window (e.g. a narrower `--tickers` or `--start` filter)
-  only rewrites that window — dates/tickers outside it are untouched.
-  Bronze on its own does not guarantee no duplicates exist across
-  unrelated, never-rewritten windows; that end-to-end guarantee comes from
-  silver's merge on (ticker, trade_date), not from bronze.
-- **Historical/snapshot behavior:** because the write is a real Iceberg
-  delete + append (not a physical overwrite), each run produces a new
-  Iceberg snapshot. The *previous* snapshot — including the rows that were
-  just deleted — remains queryable via Iceberg time travel until that
-  snapshot is expired (see the "Iceberg operations" section of the
-  README). Bronze is idempotent for reruns of the same window in the sense
-  that the *current* snapshot converges to one row per key; it is not
-  immutable/append-only across snapshots.
+- **Current-state grain:** one row per returned key written by this ingester.
+  Repeated runs replace the same keys. Existing duplicate keys created by
+  other writers are outside this writer's guarantee until those keys are
+  explicitly replaced.
+- **Missing-data policy:** missing tickers or dates do not mean deletion.
+  Only returned, valid keys are replaced; absent keys retain their old rows.
+  Invalid rows are counted in logs and omitted before the write. Empty valid
+  batches publish nothing. No market-calendar completeness is inferred.
+- **Recovery:** a known catalog conflict fails so a new invocation can fetch
+  and plan against fresh state. After an uncertain commit acknowledgement,
+  the writer reloads the catalog and confirms both its per-attempt run ID in
+  Iceberg snapshot metadata and matching current rows before reporting
+  success. Otherwise it raises `CommitOutcomeUnknownError`. Airflow does not
+  automatically retry ingestion; an operator must reconcile an unresolved
+  result using the logged run ID. A new process has a new run ID, so it cannot
+  prove a prior ambiguous commit by ID alone.
+- **Concurrency:** one Airflow DAG run is active at a time, but external
+  writers can overlap. Iceberg snapshot requirements reject a stale writer;
+  the application does not silently replay a conflicting batch. The REST
+  catalog and Trino path still need branch E2E qualification.
+- **Cost:** PyIceberg's filtered delete uses copy-on-write for partially
+  matching Parquet files. The exact-key expression groups common date/ticker
+  coverage and refuses more than 10,000 predicate literals. A larger backfill
+  must be planned explicitly; the code does not silently split a write into
+  several visible commits. Pre-commit files may become orphaned after failure
+  and require normal Iceberg maintenance.
+
+Prior snapshots remain available for time travel until expiration. The
+`_ingested_at` value changes on a fresh ingestion, even if market prices are
+unchanged; logical price rows remain unique by key.
 
 | Column | Type | Nullable | Notes |
 |---|---|---|---|
