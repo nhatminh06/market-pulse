@@ -1,0 +1,39 @@
+name: m4-gitops-e2e
+
+# Pre-merge qualification runs only when a reviewer adds this exact label.
+on:
+  pull_request:
+    types: [labeled]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m4-gitops-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  disposable-gitops:
+    if: >-
+      github.event.label.name == 'm4-e2e-approved' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feature/v2-gitops'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Record tested commit
+        run: |
+          test "$(git rev-parse HEAD)" = '${{ github.event.pull_request.head.sha }}'
+          echo "M4 PR head: $(git rev-parse HEAD)"
+      - name: Install checksum-verified kind, kubectl, Flux, and kubeconform
+        run: |
+          bash infra/ci/install-m4-tools.sh "$RUNNER_TEMP/m4-tools"
+          echo "$RUNNER_TEMP/m4-tools" >> "$GITHUB_PATH"
+      - name: Qualify disposable Linux/amd64 GitOps stack
+        run: bash infra/ci/m4-gitops-e2e.sh
