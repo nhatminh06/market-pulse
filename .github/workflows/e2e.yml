@@ -9,6 +9,9 @@ name: e2e
 # compose config). This workflow is the only place dbt build/test and
 # quality/validate_gold.py actually run against live Trino/Iceberg in CI.
 on:
+  push:
+    branches:
+      - fix/market-pulse-e2e-images
   workflow_dispatch:
   schedule:
     - cron: "17 6 * * 1"  # weekly, Monday 06:17 UTC — arbitrary off-peak time
@@ -17,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.workflow }}
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
