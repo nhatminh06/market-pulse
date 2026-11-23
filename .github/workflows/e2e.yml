@@ -86,11 +86,29 @@ jobs:
       - name: Make dbt project writable by the airflow container user
         run: sudo chown -R 50000:0 dbt
 
-      - name: Start Iceberg REST, Trino, Postgres, Airflow
-        run: docker compose up -d iceberg-rest trino postgres airflow-init airflow-scheduler
+      - name: Start Iceberg REST, Trino, and Postgres
+        run: docker compose up -d iceberg-rest trino postgres
+
+      - name: Start StatsD before Airflow
+        run: docker compose -f docker-compose.observability.yml up -d statsd-exporter
+
+      - name: Verify StatsD DNS and readiness from the Airflow network
+        run: |
+          for i in $(seq 1 20); do
+            if docker compose run --rm --no-deps --entrypoint python airflow-init -c \
+              'import socket, urllib.request; socket.getaddrinfo("statsd-exporter", 9102); urllib.request.urlopen("http://statsd-exporter:9102/metrics", timeout=3)' ; then
+              exit 0
+            fi
+            echo "Waiting for StatsD... ($i/20)"
+            sleep 3
+          done
+          echo "StatsD did not become reachable from Airflow" && exit 1
+
+      - name: Start Airflow
+        run: docker compose up -d airflow-init airflow-scheduler
 
       - name: Start optional observability stack
-        run: docker compose -f docker-compose.observability.yml up -d --build
+        run: docker compose -f docker-compose.observability.yml up -d --build --no-recreate warehouse-exporter prometheus grafana
 
       - name: Wait for Trino to accept queries
         run: |
