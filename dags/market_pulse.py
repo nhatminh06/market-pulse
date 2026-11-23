@@ -53,6 +53,7 @@ with DAG(
     start_date=datetime(2026, 1, 1),
     schedule="@daily",
     catchup=False,
+    max_active_runs=1,
     default_args=default_args,
     dagrun_timeout=timedelta(minutes=30),
     tags=["lakehouse", "market-pulse"],
@@ -61,6 +62,7 @@ with DAG(
     ingest = BashOperator(
         task_id="ingest_bronze",
         bash_command="python /opt/airflow/ingestion/ingest_bronze.py --days 5",
+        retries=0,  # An unresolved commit acknowledgement needs operator reconciliation.
     )
 
     transform = BashOperator(

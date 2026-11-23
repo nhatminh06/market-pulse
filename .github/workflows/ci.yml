@@ -28,9 +28,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - run: pip install pytest pandas pyarrow "yfinance==0.2.*" "pyiceberg[s3fs,pyarrow]==0.7.*" trino
-      # No network access, no live Trino/MinIO/Iceberg — every test in
-      # tests/{unit,integration,smoke} runs against fixtures or fakes.
+      - run: pip install pytest pandas pyarrow "sqlalchemy>=2,<3" "yfinance==0.2.*" "pyiceberg[s3fs,pyarrow]==0.7.1" trino
+      # Uses fixtures and a local SQLite Iceberg catalog; no live Trino/MinIO/REST stack.
       - run: pytest tests/ -v
 
   terraform:
@@ -81,6 +80,9 @@ jobs:
           ingest, transform, quality = (dag.get_task(t) for t in ["ingest_bronze", "dbt_build", "validate_gold"])
           assert transform.task_id in ingest.downstream_task_ids
           assert quality.task_id in transform.downstream_task_ids
+          assert dag.max_active_runs == 1
+          assert ingest.retries == 0  # Unknown commit outcomes require manual reconciliation.
+          assert transform.retries == quality.retries == 2
 
           print("DAG structure OK:", dag.dag_id, sorted(actual_task_ids))
           PY

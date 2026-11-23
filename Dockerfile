@@ -4,7 +4,7 @@ USER airflow
 
 RUN pip install --no-cache-dir \
     "yfinance==0.2.*" \
-    "pyiceberg[s3fs,pyarrow]==0.7.*" \
+    "pyiceberg[s3fs,pyarrow]==0.7.1" \
     "dbt-core==1.8.*" \
     "dbt-trino==1.8.*" \
     pandas \

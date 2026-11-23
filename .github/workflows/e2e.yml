@@ -119,6 +119,61 @@ jobs:
           print(f"Loaded {n} fixture rows into bronze.prices for {tickers}")
           PY
 
+      - name: Verify atomic correction and partial provider response
+        run: |
+          docker compose exec -T airflow-scheduler python - <<'PY'
+          import sys
+          sys.path.insert(0, "/opt/airflow")
+          from datetime import datetime, timezone
+          import pandas as pd
+          import pyarrow as pa
+          from pyiceberg.exceptions import CommitFailedException
+          from ingestion.ingest_bronze import _replacement_filter, get_catalog, write_bronze_table
+
+          cat = get_catalog()
+          before = cat.load_table("bronze.prices").scan().to_arrow().to_pylist()
+          original = {(r["ticker"], r["date"]): r for r in before}
+          assert len(before) == 6
+          correction = pd.read_csv("/opt/airflow/tests/fixtures/valid_ohlcv.csv", parse_dates=["date"]).iloc[[0]].copy()
+          correction["date"] = correction["date"].dt.date
+          correction["close"] = 101.5
+          correction["adj_close"] = 101.5
+          correction["_ingested_at"] = datetime.now(timezone.utc)
+
+          # A failed process after staging must leave the published table intact.
+          staged = cat.load_table("bronze.prices").transaction()
+          staged.overwrite(pa.Table.from_pandas(correction, preserve_index=False),
+                           overwrite_filter=_replacement_filter(correction))
+          assert cat.load_table("bronze.prices").scan().to_arrow().to_pylist() == before
+
+          # Only AAPL/Jan 2 returned, though both tickers and more dates were requested.
+          assert write_bronze_table(cat, correction, ["AAPL", "MSFT"], "2024-01-01") == 1
+          after = cat.load_table("bronze.prices").scan().to_arrow().to_pylist()
+          current = {(r["ticker"], r["date"]): r for r in after}
+          assert len(after) == len(current) == 6
+          changed = ("AAPL", correction.iloc[0]["date"])
+          assert current[changed]["close"] == 101.5
+          for key in original.keys() - {changed}:
+              assert current[key] == original[key], key
+
+          # Two writers based on one snapshot: the stale writer must fail.
+          first = cat.load_table("bronze.prices").transaction()
+          second = cat.load_table("bronze.prices").transaction()
+          arrow = pa.Table.from_pandas(correction, preserve_index=False)
+          predicate = _replacement_filter(correction)
+          first.overwrite(arrow, overwrite_filter=predicate)
+          second.overwrite(arrow, overwrite_filter=predicate)
+          first.commit_transaction()
+          try:
+              second.commit_transaction()
+          except CommitFailedException:
+              pass
+          else:
+              raise AssertionError("stale Iceberg writer unexpectedly committed")
+          assert cat.load_table("bronze.prices").scan().to_arrow().num_rows == 6
+          print("Atomic correction, partial response, stale-writer rejection and unaffected history verified")
+          PY
+
       - name: dbt build (real Trino/Iceberg, fixture data)
         run: >
           docker compose exec -T airflow-scheduler
@@ -128,6 +183,19 @@ jobs:
         run: >
           docker compose exec -T airflow-scheduler
           python /opt/airflow/quality/validate_gold.py
+
+      - name: Verify corrected Gold row through Trino
+        run: |
+          docker compose exec -T airflow-scheduler python - <<'PY'
+          from trino.dbapi import connect
+
+          conn = connect(host="trino", port=8080, user="admin", catalog="iceberg")
+          cur = conn.cursor()
+          cur.execute("select adj_close from gold.fct_daily_metrics where ticker = 'AAPL' and trade_date = DATE '2024-01-02'")
+          rows = cur.fetchall()
+          assert len(rows) == 1 and float(rows[0][0]) == 101.5, rows
+          print("Trino Gold correction verified: AAPL 2024-01-02 adj_close=101.5")
+          PY
 
       - name: One representative Trino query
         run: >
