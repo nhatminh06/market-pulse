@@ -1,5 +1,27 @@
 # Testing
 
+## V2-M3 observability qualification (verified 2026-11-23)
+
+The [successful M3 E2E run 45271006974](https://github.com/nhatminh06/market-pulse/actions/runs/45271006974)
+tested `2e6eb84262a965ffcefbcc53c99bff82d3d4f1d9` on GitHub's
+Linux/amd64 runner. [PR CI run 45248899578](https://github.com/nhatminh06/market-pulse/actions/runs/45248899578)
+passed all eight jobs, including `promtool` rule scenarios and actionlint.
+The E2E verified StatsD DNS/readiness before Airflow startup, all three
+Prometheus targets, Bronze/Gold/Iceberg exporter metrics, a real scheduler
+heartbeat, Grafana datasource/dashboard API access and a proxied `up` query,
+the loaded Bronze-stale rule, observation failure and recovery, and unchanged
+Bronze/Gold row counts. A real `validate_gold` task passed, but its duration
+metric was not observed. Individual dashboard panels, actual alert firing,
+and Iceberg snapshot identity during the failure simulation were not checked.
+See [observability qualification details](observability.md).
+
+The same run passed M1 atomic correction and stale-writer rejection, M2
+disposable lifecycle/recovery and Bronze isolation, dbt
+`PASS=21 WARN=0 ERROR=0 SKIP=0 TOTAL=21`, all four Gold quality checks,
+corrected AAPL Gold data and a representative Trino query, and full teardown.
+The [earlier failed run 45243230929](https://github.com/nhatminh06/market-pulse/actions/runs/45243230929)
+is retained as startup-order failure evidence.
+
 ## V2-M2 lifecycle qualification (verified 2026-11-23)
 
 The [successful M2 branch E2E run 45232058559](https://github.com/nhatminh06/market-pulse/actions/runs/45232058559)
@@ -120,7 +142,7 @@ remain a reproducibility risk; they are outside this image recovery.
 | Terraform fmt/init/validate | terraform CLI | Yes (`terraform` job) | N/A |
 | Full pipeline (ingest → bronze → silver → gold → quality gate) against live infra | full docker-compose stack | **No** | Yes, against a fixture (not live yfinance) |
 
-**Verified:** The latest [V2-M1 branch run 45219612981](https://github.com/nhatminh06/market-pulse/actions/runs/45219612981) (2026-11-23) passed the atomic-ingestion checks above and the full fixture pipeline. The earlier [M1 image recovery run 45209879444](https://github.com/nhatminh06/market-pulse/actions/runs/45209879444) and [August 6 run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) are historical fixture-pipeline evidence. Re-check the latest run before relying on it.
+**Verified:** The latest [V2-M3 branch run 45271006974](https://github.com/nhatminh06/market-pulse/actions/runs/45271006974) (2026-11-23) passed the full fixture pipeline and monitoring checks described above. The earlier [V2-M2 run 45232058559](https://github.com/nhatminh06/market-pulse/actions/runs/45232058559), [V2-M1 run 45219612981](https://github.com/nhatminh06/market-pulse/actions/runs/45219612981), [M1 image recovery run 45209879444](https://github.com/nhatminh06/market-pulse/actions/runs/45209879444), and [August 6 run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) are historical fixture-pipeline evidence. Re-check the latest run before relying on it.
 
 **Why the split:** Trino, Iceberg REST, and MinIO need to actually be
 running for dbt SQL or the quality gate's queries to mean anything, and

@@ -8,8 +8,11 @@ After the [core stack](../README.md) is running and `.env` has been populated by
 
 ```sh
 docker compose -f docker-compose.observability.yml up -d --build
+docker compose restart airflow-scheduler
 open http://localhost:3000
 ```
+
+Airflow resolves the StatsD host at startup. If starting a new stack, create the core Compose network, start `statsd-exporter`, verify it is reachable, and only then start Airflow initialization and the scheduler. The restart above applies when Airflow was already running before monitoring started.
 
 Grafana defaults to `admin` / `admin` for a disposable localhost demo. Set `GRAFANA_ADMIN_PASSWORD` in the shell or `.env` for any longer-lived setup. Prometheus is at `http://localhost:9090`. Only Grafana and Prometheus bind to localhost; the two exporters stay on the Compose network. Teardown: `docker compose -f docker-compose.observability.yml down`. This does not remove the warehouse volumes.
 
@@ -49,4 +52,10 @@ Prometheus evaluates every 30 seconds. Rules are: warehouse exporter down for 5 
 
 Use `docker compose -f docker-compose.observability.yml ps`, `logs warehouse-exporter`, `curl http://localhost:9090/api/v1/targets`, and `curl http://localhost:9090/api/v1/rules`. A missing data gauge with `market_pulse_observation_success=0` means REST, Trino, or a query failed; exporter logs contain the exception class and message. If Airflow metrics are missing, verify `statsd` is installed in the Airflow image and the scheduler can resolve `statsd-exporter` on `marketpulse_default`.
 
-Local unit/config tests cover read-only query shapes, UTC conversion, empty results, failure/cache recovery, bounded metric names, and provisioning references. The manual E2E workflow now has an observability step to inspect real StatsD exposition, Prometheus targets/queries, Grafana datasource/dashboard, and warehouse data isolation. **That step has not run yet on this branch.** Real metric names, Trino `$snapshots` compatibility, dashboard rendering, and alert behavior remain unqualified until a GitHub-hosted E2E run. The monitoring images use floating `latest` tags and the default Grafana password is for localhost demos only; pin reviewed digests and set unique credentials before any shared deployment.
+Local unit/config tests cover read-only query shapes, UTC conversion, empty results, failure/cache recovery, bounded metric names, and provisioning references. The [successful GitHub E2E run 45271006974](https://github.com/nhatminh06/market-pulse/actions/runs/45271006974) tested commit `2e6eb84262a965ffcefbcc53c99bff82d3d4f1d9` on Linux/amd64. The [earlier failed run 45243230929](https://github.com/nhatminh06/market-pulse/actions/runs/45243230929) showed Airflow falling back to `NoStatsLogger` because StatsD started later; the qualified workflow starts StatsD and checks its DNS/HTTP readiness before Airflow initialization.
+
+In the successful run, Prometheus reported `up=1` for the Prometheus, Airflow StatsD exporter, and warehouse exporter targets. Warehouse queries returned Bronze ingestion time, Gold row count **6**, and an Iceberg snapshot count equal to catalog metadata; the numeric snapshot count was not printed. The exporter reported `market_pulse_observation_success=1` and `market_pulse_live_feed_expected=0`; its exposition had no ticker, run, or snapshot ID labels. A real scheduler heartbeat appeared as `market_pulse_airflow_scheduler_heartbeat_total`. The real `validate_gold` task succeeded, but `market_pulse_airflow_task_duration_seconds_count{task="validate_gold"}` was **not observed**; task-duration telemetry remains unverified.
+
+Grafana returned the provisioned Prometheus datasource and dashboard (at least ten panels), and its Prometheus proxy returned a nonempty `up` query. A representative warehouse-availability query returned data. These API checks do not prove that every dashboard panel renders or that every panel query returns data. Prometheus exposed the `MarketPulseBronzeStale` alert rule; CI `promtool` config and rule scenarios passed. The run did not exercise actual alert firing or external delivery, and fixture-only live-feed alerting stayed disabled. No external notification channel is configured.
+
+When Iceberg REST was stopped and the warehouse exporter restarted, the exporter reported observation failure and removed the Gold row-count gauge. After REST and exporter restart it reported success again. Bronze and Gold row counts were unchanged, and both Compose stacks were torn down. The failure simulation did not explicitly compare Iceberg snapshot IDs. The monitoring images use floating `latest` tags and the default Grafana password is for localhost demos only; pin reviewed digests and set unique credentials before any shared deployment.
