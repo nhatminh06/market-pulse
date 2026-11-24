@@ -10,7 +10,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-
 MODULE_PATH = Path(__file__).resolve().parents[2] / "infra/flux/git-http.py"
 spec = importlib.util.spec_from_file_location("git_http", MODULE_PATH)
 git_http = importlib.util.module_from_spec(spec)
