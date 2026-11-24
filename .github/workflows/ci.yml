@@ -113,3 +113,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: raven-actions/actionlint@v2
+
+  m4-gitops-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with: { python-version: "3.11" }
+      - name: Verify M1–M3 Compose and Terraform paths are unchanged
+        if: github.head_ref == 'feature/v2-gitops'
+        run: git diff --exit-code 43c650cf5f7d390866f33cfbe4c7c47cb53a4277 HEAD -- docker-compose.yaml docker-compose.observability.yml infra/terraform .github/workflows/e2e.yml
+      - name: Install checksum-verified M4 tools
+        run: |
+          bash infra/ci/install-m4-tools.sh "$RUNNER_TEMP/m4-tools"
+          echo "$RUNNER_TEMP/m4-tools" >> "$GITHUB_PATH"
+      - run: pip install 'PyYAML==6.0.2' 'jsonschema==4.25.1'
+      - name: Validate M4 manifests, links, and isolation
+        run: |
+          python infra/ci/check-m4-static.py
+          sh infra/k8s/statsd/check-mapping.sh
+          sh -n infra/k8s/statsd/check-mapping.sh infra/k8s/minio/check-object.sh
+          bash -n infra/ci/install-m4-tools.sh infra/ci/m4-gitops-e2e.sh
+          python - <<'PY'
+          from pathlib import Path
+          for path in (Path('infra/flux/git-http.py'), Path('infra/ci/check-m4-static.py')):
+              compile(path.read_text(), str(path), 'exec')
+          print('Python syntax OK')
+          PY

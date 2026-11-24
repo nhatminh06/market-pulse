@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: market-pulse-m4-storage
+  labels:
+    app.kubernetes.io/part-of: market-pulse-m4
+    app.kubernetes.io/component: disposable-storage
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

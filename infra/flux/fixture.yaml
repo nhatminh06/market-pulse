@@ -1,0 +1,24 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: m4-fixture
+  namespace: flux-system
+spec:
+  interval: 20s
+  url: http://market-pulse-m4-git/fixture.git
+  ref:
+    branch: main
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: m4-fixture
+  namespace: flux-system
+spec:
+  interval: 20s
+  path: ./config
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: m4-fixture
+  targetNamespace: m4-gitops-test
