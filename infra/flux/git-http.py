@@ -6,7 +6,38 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlsplit
 
 
+GIT_COMMAND = ["git", "-c", "safe.directory=/srv/fixture.git", "http-backend"]
+
+
+def parse_cgi(output):
+    header, separator, body = output.partition(b"\r\n\r\n")
+    if not separator:
+        raise ValueError("missing CGI headers")
+    headers = []
+    status = 200
+    try:
+        for line in header.decode("ascii").split("\r\n"):
+            name, value = line.split(": ", 1)
+            if name == "Status":
+                code = value.split(" ", 1)[0]
+                if len(code) != 3 or not code.isdigit():
+                    raise ValueError("invalid CGI status")
+                status = int(code)
+            else:
+                if not name or "\n" in value:
+                    raise ValueError("invalid CGI header")
+                headers.append((name, value))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("malformed CGI headers") from exc
+    if status == 200 and not any(name.lower() == "content-type" for name, _ in headers):
+        raise ValueError("missing CGI content type")
+    return status, headers, body
+
+
 class GitHandler(BaseHTTPRequestHandler):
+    def log_request(self, code="-", size="-"):
+        pass  # Request paths and headers do not belong in fixture logs.
+
     def do_GET(self):
         self.serve_git()
 
@@ -29,28 +60,31 @@ class GitHandler(BaseHTTPRequestHandler):
             CONTENT_TYPE=self.headers.get("Content-Type", ""),
             CONTENT_LENGTH=str(length),
         )
-        response = subprocess.run(
-            ["git", "http-backend"],
-            input=self.rfile.read(length),
-            env=env,
-            capture_output=True,
-            check=False,
-        )
-        header, separator, body = response.stdout.partition(b"\r\n\r\n")
-        if not separator or response.returncode:
-            self.log_error("git http-backend: %s", response.stderr.decode("utf-8", "replace"))
+        try:
+            response = subprocess.run(
+                GIT_COMMAND,
+                input=self.rfile.read(length),
+                env=env,
+                capture_output=True,
+                check=False,
+            )
+            status, headers, body = parse_cgi(response.stdout)
+        except (OSError, ValueError):
+            self.log_error("git http-backend failed or returned malformed CGI output")
             self.send_error(502)
             return
-        lines = header.decode("ascii").split("\r\n")
-        status = next((line[8:] for line in lines if line.startswith("Status: ")), "200 OK")
-        self.send_response(int(status.split()[0]))
-        for line in lines:
-            if line and not line.startswith("Status: "):
-                name, value = line.split(": ", 1)
-                self.send_header(name, value)
+        if response.returncode or status != 200:
+            reason = "fixture repository ownership mismatch" if b"detected dubious ownership" in response.stderr else "backend failure"
+            self.log_error("git http-backend %s (CGI status %d, exit %d)", reason, status, response.returncode)
+            self.send_error(502)
+            return
+        self.send_response(status)
+        for name, value in headers:
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
 
-HTTPServer(("0.0.0.0", 80), GitHandler).serve_forever()
+if __name__ == "__main__":
+    HTTPServer(("0.0.0.0", 80), GitHandler).serve_forever()

@@ -405,3 +405,24 @@ Before one draft PR and one authorized label-triggered AMD64 run, review the
 uncommitted file inventory and the complete diff against `main`. Remote
 M4.5B PASS requires the actual job and cleanup assertions to finish; local
 schema validation or the previous ARM64 runs cannot substitute for it.
+
+## M4.5B first remote run and focused Git fixture diagnosis (2026-11-23)
+
+[Draft PR #11](https://github.com/nhatminh06/market-pulse/pull/11) qualified
+commit `8591a047c56b169161920dc24c5b05a6cc71d563` through all nine CI
+jobs and GitGuardian. Its one [Linux/amd64 M4 run](https://github.com/nhatminh06/market-pulse/actions/runs/45290391256)
+pulled all six pinned images, booted a Ready kind cluster, and started both
+Flux controllers. Both GitRepositories then received HTTP 500 from the local
+Git fixture; neither StatsD nor MinIO was deployed. The failure trap deleted
+the named kind node and reported no remaining kind clusters. The server's
+stderr was not captured, so the precise CI cause is **unconfirmed**.
+
+A disposable local test with the pinned Python/Alpine image and Git 2.54.1
+reproduced CGI `Status: 500` with process exit 0 when a root backend read a
+UID-1001 bare repository. A process-local exception for only
+`/srv/fixture.git` restored the smart HTTP advertisement. The revised fixture
+adds that exception, checks the actual advertisement from a separate Docker
+client before Flux starts, and classifies server errors without logging raw
+stderr, bodies, environment variables, or credentials. A new Linux/amd64 run
+is needed to establish whether the correction resolves the CI failure and to
+qualify all downstream workload and cleanup assertions.

@@ -33,6 +33,19 @@ cleanup() {
     k -n market-pulse-m4-storage delete pod/m4-s3-client --ignore-not-found --wait=true >/dev/null 2>&1
     k -n market-pulse-gitops-pilot delete pod/m4-metric-client --ignore-not-found --wait=true >/dev/null 2>&1
   fi
+  if [ "$result" -ne 0 ] && docker container inspect "$git_server" >/dev/null 2>&1; then
+    docker inspect "$git_server" --format 'Disposable Git server state={{.State.Status}} exit={{.State.ExitCode}}'
+    docker logs "$git_server" 2>&1 | awk '
+      /git http-backend fixture repository ownership mismatch/ { print "Git fixture: repository ownership mismatch" }
+      /git http-backend backend failure/ { print "Git fixture: backend returned an error" }
+      /git http-backend failed or returned malformed CGI output/ { print "Git fixture: backend failed or returned malformed CGI output" }
+      /CGI status [0-9]+, exit [0-9]+/ {
+        match($0, /CGI status [0-9]+, exit [0-9]+/)
+        print "Git fixture: " substr($0, RSTART, RLENGTH)
+      }
+      /ERROR:|WARNING:/ { print "Git fixture: package setup reported an error" }
+    ' | sort -u
+  fi
   docker rm -f "$git_server" >/dev/null 2>&1
   kind delete cluster --name "$cluster" --kubeconfig "$KUBECONFIG"
   for volume in $node_volumes; do
@@ -107,6 +120,26 @@ initial_sha=$(git -C "$scratch/git/work" rev-parse HEAD)
 git clone -q --bare "$scratch/git/work" "$scratch/git/fixture.git"
 docker run -d --name "$git_server" --network kind --mount "type=bind,src=$scratch/git,dst=/srv,readonly" --mount "type=bind,src=$PWD/infra/flux/git-http.py,dst=/git-http.py,readonly" "$python_image" sh -c 'apk add --no-cache git git-daemon >/dev/null && python /git-http.py' >/dev/null
 test "$(docker inspect "$git_server" --format '{{json .NetworkSettings.Ports}}')" = '{}'
+git_ready=0
+for _ in $(seq 1 10); do
+  if [ "$(docker inspect "$git_server" --format '{{.State.Running}}')" != true ]; then break; fi
+  if docker run --rm -i --network kind "$python_image" python - "$initial_sha" >/dev/null 2>&1 <<'PY'
+import sys
+import urllib.request
+
+url = 'http://market-pulse-m4-git/fixture.git/info/refs?service=git-upload-pack'
+with urllib.request.urlopen(url, timeout=3) as response:
+    body = response.read()
+    assert response.status == 200
+    assert response.headers.get_content_type() == 'application/x-git-upload-pack-advertisement'
+    assert body.startswith(b'001e# service=git-upload-pack\n0000')
+    assert sys.argv[1].encode() in body
+PY
+  then git_ready=1; break; fi
+  sleep 2
+done
+test "$git_ready" = 1 || { echo 'Disposable Git smart HTTP endpoint failed readiness' >&2; exit 1; }
+echo "Disposable Git smart HTTP advertisement Ready at $initial_sha"
 k apply -f infra/flux/statsd-pilot.yaml -f infra/flux/minio-pilot.yaml
 k -n flux-system wait gitrepository/m4-statsd gitrepository/m4-minio --for=condition=Ready --timeout=180s
 k -n flux-system wait kustomization/m4-statsd kustomization/m4-minio-namespace --for=condition=Ready --timeout=180s

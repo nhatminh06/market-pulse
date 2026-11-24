@@ -150,4 +150,13 @@ only source-controller and kustomize-controller from Flux CLI v2.10.1's
 exported manifest, replacing their release tags with the qualified immutable
 index digests before apply. The checked-in Flux resources keep credentials
 out of Git; the job bootstraps a unique Secret after namespace reconciliation.
-The script was statically reviewed in M4.5A but has not run on GitHub yet.
+The first [Linux/amd64 run](https://github.com/nhatminh06/market-pulse/actions/runs/45290391256)
+reached Ready kind and Flux controllers, then both GitRepositories received
+HTTP 500 from the fixture server. The server's stderr was not retained, so
+the specific CI error remains unconfirmed. A focused Docker test reproduced
+the same CGI HTTP 500 with process exit 0 when a root Git 2.54.1 backend read
+a UID-1001 bare repository. Configuring `safe.directory=/srv/fixture.git` for
+that Git process restored the smart HTTP advertisement. The fixture now makes
+only that exact-repository exception, checks the advertisement and expected
+commit from a separate Docker-network client before applying Flux resources,
+and retains only classified, non-secret server diagnostics on failure.
