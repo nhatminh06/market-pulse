@@ -423,6 +423,59 @@ UID-1001 bare repository. A process-local exception for only
 `/srv/fixture.git` restored the smart HTTP advertisement. The revised fixture
 adds that exception, checks the actual advertisement from a separate Docker
 client before Flux starts, and classifies server errors without logging raw
-stderr, bodies, environment variables, or credentials. A new Linux/amd64 run
-is needed to establish whether the correction resolves the CI failure and to
-qualify all downstream workload and cleanup assertions.
+stderr, bodies, environment variables, or credentials. At the time, a new
+Linux/amd64 run was needed to qualify downstream workload and cleanup
+assertions.
+
+## M4.5B Linux/amd64 qualification (2026-11-24)
+
+[Draft PR #11](https://github.com/nhatminh06/market-pulse/pull/11) qualified
+commit `cc450e6fede40609fe5ded7f9a8c2f2c092d7dba` in the successful
+[GitHub Actions run 45298404500](https://github.com/nhatminh06/market-pulse/actions/runs/45298404500).
+This remote Linux/amd64 result complements the earlier local Apple Silicon
+M4.1–M4.4 checks; it does not qualify the full Compose lakehouse on Kubernetes.
+All nine ordinary CI jobs and GitGuardian had passed on the tested commit.
+
+The job pulled and inspected the pinned amd64 kind, Flux source and kustomize
+controllers, StatsD exporter, MinIO, and Python images. It verified the
+MinIO `minio` and `mc` binaries, Kubernetes v1.36.4 node and CoreDNS readiness,
+Flux controller readiness, and the disposable Git smart HTTP advertisement.
+Both Flux sources and the StatsD and MinIO Kustomizations applied fixture
+revision `5ca5060ff06921e77fbca65a1a84fa335e566e6e`; automatic polling
+later applied `3cd85fc0eeb3ac0c34f4cc6d3cf76efe6c4a7e5f` for the MinIO
+rollout. The first [AMD64 run 45290391256](https://github.com/nhatminh06/market-pulse/actions/runs/45290391256)
+failed at Git HTTP 500; the second
+[run 45294334916](https://github.com/nhatminh06/market-pulse/actions/runs/45294334916)
+verified the Git repair but failed at post-restart StatsD delivery. Neither
+failed run is counted as M4.5B PASS.
+
+The MinIO workload used
+`ghcr.io/intikhab49/minio-from-source@sha256:1025a6dd8452e6fe8d3fdf16dbce7c18f8417acd22e5abd7376d8322aee5edab`.
+The job generated disposable MinIO credentials in a private scratch directory
+and created only a temporary Kubernetes Secret and a 1 GiB PVC. MinIO reached
+Ready with that PVC; its UID and bound PV stayed the same through pod
+replacement, Git-driven StatefulSet rollout, and drift correction. The S3
+object SHA-256 was `17f0bf980b05018070b10e4fec3e5ff12d656d0db089b61321163512ecd8185e`
+at each check. No existing Compose volume was mounted. The initial synthetic
+StatsD histogram had count 3 and sum 3.75. After pod replacement, the helper
+verified one ready TCP and UDP EndpointSlice backend for the new Pod UID,
+reached `/metrics` through the Service, observed a fresh Service UDP warm-up,
+and asserted the final histogram count 1, sum 1.25, and `le="5"` bucket 1.
+It also checked that the old histogram reset and an unmatched metric was
+dropped.
+
+Five sampled kind-node memory readings ranged from 826.7 to 842.6 MiB and
+CPU from 7.63% to 26.02%; runner `MemAvailable` stayed above 14,311,464 kB.
+The sampled workload working sets were 57–74 MiB for kustomize-controller,
+27 MiB for source-controller, 58–60 MiB for MinIO, and 4–6 MiB for StatsD.
+The node reported no memory, disk, or PID pressure and no pod restarts.
+The cleanup trap deleted the named client pods, Git container, kind cluster,
+node, and checked disposable volumes and named resources; it reported
+`M4 qualification and named-resource teardown passed`.
+
+Remaining limits: the MinIO image is unofficial and its attestation was not
+verified; the disposable Git fixture installs unpinned Alpine Git packages;
+Kubernetes Secrets reside in the throwaway cluster during the test. There is
+no backup or cluster-loss durability test, long-duration production reliability
+evidence, or full Kubernetes-native lakehouse migration. The successful run
+does not replace the existing M1–M3 Compose qualification.
