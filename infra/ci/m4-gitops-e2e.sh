@@ -267,8 +267,7 @@ check_statsd 3
 old_statsd_uid=$(k -n market-pulse-gitops-pilot get pod -l app=statsd-exporter -o jsonpath='{.items[0].metadata.uid}')
 k -n market-pulse-gitops-pilot delete pod -l app=statsd-exporter --wait=true
 k -n market-pulse-gitops-pilot rollout status deployment/statsd-exporter --timeout=120s
-test "$(k -n market-pulse-gitops-pilot get pod -l app=statsd-exporter -o jsonpath='{.items[0].metadata.uid}')" != "$old_statsd_uid"
-check_statsd 1
+python3 infra/ci/m4_statsd_recovery.py "$old_statsd_uid"
 check_claim
 check_object
 
