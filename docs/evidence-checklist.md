@@ -1,11 +1,14 @@
 # Evidence checklist
 
-None of the screenshots below exist yet in this repository — this is the
-capture list, not a record of what's done. Run `docker compose up -d` and
-walk through the Quick Start in the README first (it populates real data),
-then work through this list. Save files into `docs/assets/<subsystem>/`
-with descriptive names (e.g. `docs/assets/superset/dashboard-full.png`) and
-link them from the README once they exist.
+No application screenshots are committed. This is a capture plan, not
+proof that the listed UIs, panels, or views have been visually verified.
+Only capture against an already-qualified, disposable runtime with fresh
+credentials. **Do not start, reset, or remove preserved local Docker
+containers/volumes to obtain portfolio screenshots.** Store approved images in
+`docs/assets/<subsystem>/`, and link them only after the files exist.
+Include a caption with the commit SHA, environment, date, and demonstrated
+behavior. Public GitHub Actions run links can establish CI execution without
+turning an Actions screenshot into false application-UI evidence.
 
 **Before saving anything**: redact ports/hostnames if you're not running
 purely `localhost`, and never include `.env` contents, MinIO secret keys,
@@ -13,7 +16,8 @@ Slack webhook URLs, or the generated Airflow admin password in a
 screenshot's visible chrome (browser address bar, terminal history, etc.).
 
 ## Superset (`docs/assets/superset/`)
-- [ ] Full dashboard, all 6 panels visible
+- [ ] Confirm whether the intended six-panel dashboard actually exists; record the dashboard ID/revision (do not assume provisioning)
+- [ ] Full dashboard with actual loaded data and all existing panels visible
 - [ ] Cumulative-return-by-ticker line chart
 - [ ] Price-vs-moving-average line chart
 - [ ] Volatility heatmap
@@ -59,6 +63,27 @@ screenshot's visible chrome (browser address bar, terminal history, etc.).
 - [ ] `dbt build` output
 - [ ] `quality/validate_gold.py` passing
 - [ ] Superset dashboard query loading
+
+
+## Observability — M3 (`docs/assets/observability/`)
+- [ ] Prometheus targets and a sample `market_pulse_observation_success` query, with fixture-mode flag visible
+- [ ] Grafana **Market Pulse — Pipeline Operations** dashboard showing real rendered panels (not just dashboard API metadata)
+- [ ] One warehouse freshness/row-count panel and one pipeline-health panel with actual query results
+- [ ] Annotate missing task-duration metrics as unverified; do not turn absent samples into zero
+- [ ] If demonstrating alert firing, use a disposable fault with recovery evidence; never imply notification delivery without a real integration
+
+## Kubernetes / Flux pilot — M4 (`docs/assets/gitops/`)
+- [ ] Prefer stable [M4 Linux/amd64 E2E run 45298404500](https://github.com/nhatminh06/market-pulse/actions/runs/45298404500) and [merged PR #11](https://github.com/nhatminh06/market-pulse/pull/11) as the primary CI evidence
+- [ ] If a separate disposable kind environment is recreated safely, capture Flux GitRepository/Kustomization Ready state and reconciled revisions
+- [ ] Capture StatsD exporter Service/EndpointSlice recovery and a real metrics response
+- [ ] Capture MinIO PVC identity and object-hash persistence across rollout, using sanitized test output
+- [ ] Label these **pilots**, not a Kubernetes-native deployment of Airflow, dbt, Trino, or Superset
+
+## Capture metadata and review
+- [ ] Save the source revision, date, isolated environment name, and exact commands alongside captures
+- [ ] Remove tokens, terminal history, temporary secrets, password fields, and identifying host details
+- [ ] Review each final file before linking it in the README; no mockups or reconstructed interfaces
+- [ ] Keep CI run references separate from visual UI proof; see [architecture/evidence register](architecture-and-evidence.md)
 
 Once a subsystem's checklist is fully checked off, update the README's
 "Screenshots / evidence" section to link the real files instead of pointing

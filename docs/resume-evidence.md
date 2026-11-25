@@ -2,9 +2,9 @@
 
 Every public-facing claim about this project should trace to one of the
 rows below. If you can't find the claim here, don't state it publicly until
-it's added and verified. Counts were generated on 2026-08-05 against this
-branch's working tree — re-run the commands before reusing a number, since
-they drift as the repo changes.
+it's added and verified. Some historical counts were generated on 2026-08-05 and may be stale.
+Re-run the commands before reusing counts, and use the dated run links for
+recent M3/M4 qualification claims.
 
 | Claim | Evidence | Status |
 |---|---|---|
@@ -18,11 +18,15 @@ they drift as the repo changes.
 | ~60,000 rows across the pipeline | No data has been ingested in this environment (no Docker daemon) | **Unverified — requires manual run**: `select count(*) from iceberg.bronze.prices` after a full backfill |
 | ~60% faster analytical queries vs. raw Parquet | No benchmark has been run — see `docs/benchmarks.md` | **Unverified — removed from README**, framework exists in `benchmarks/` to produce a real number |
 | Cold-start reduced from ~8 min to ~15 sec | No before/after benchmark exists in this repo's history | **Unverified — removed from README**, methodology documented in `docs/benchmarks.md` |
-| CI validates Terraform, dbt, SQL lint, DAG imports, Python tests, Docker Compose config, YAML, GitHub Actions syntax on every PR | `.github/workflows/ci.yml` — 8 jobs, all confirmed to run against this repo's actual files (dbt parse, sqlfluff, pytest, terraform validate, compose config, yamllint, actionlint, DAG structure check) | **Verified** (workflow contents reviewed; GitHub Actions execution itself not observed from this environment — no way to trigger a real Actions run here) |
+| Ordinary CI validates Terraform, dbt, SQL lint, DAG imports, Python tests, Docker Compose config, YAML, and workflow syntax | [Post-merge run 45301461494](https://github.com/nhatminh06/market-pulse/actions/runs/45301461494) on `45cef312`; see `.github/workflows/ci.yml` | **Verified for that commit**; does not execute full-stack E2E on each PR |
 | dbt build + dbt test + gold validation run against real Trino/Iceberg | `.github/workflows/e2e.yml`, executed manually via `gh workflow run` on 2026-08-06 — [run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380), took ~2.5 minutes end-to-end, concluded `success` | **Verified** — real run: loaded 6 fixture rows into bronze, `dbt build` completed 21/21 model+test checks as PASS (0 errors), the Python quality gate reported 4/4 PASS (including the not-empty-table check), and the representative Trino query returned real computed `daily_return`/`sma_20`/`is_volume_anomaly` values (first-row-per-ticker nulls behaving as documented) |
 | Dashboard has 6 Superset panels | README's existing dashboard table (Total Volume Anomalies, Cumulative Return, Price vs MA, Volatility Heatmap, Avg Daily Return by Sector, Volume Anomalies table) | **Unverified** — no Superset dashboard JSON/assets are checked into the repo to confirm these panels exist as built; treat as a design intent until screenshotted (see `docs/evidence-checklist.md`) |
 | "One-command" / "$0 cloud cost" operation | Quick Start requires `docker compose build`, `docker compose up -d`, `terraform apply`, then a manual backfill command — multiple commands, not one | **Reworded in README** to describe the actual multi-step Quick Start; "no paid cloud infrastructure required" is accurate (everything runs on local MinIO/Postgres/Trino) and kept, reworded to not imply electricity/internet/cloud migration are free |
 | MIT license | `LICENSE` (root) | **Verified** — file added, README updated to point at it directly |
+| M3 observability integration | [M3 real E2E run 45271006974](https://github.com/nhatminh06/market-pulse/actions/runs/45271006974), [observability qualification](observability.md) | **Verified in scope**: Prometheus/exporters, Grafana provisioning API and recovery; individual panel rendering and real alert delivery **not verified** |
+| M4 disposable Kubernetes/Flux foundation | [M4 Linux/amd64 E2E run 45298404500](https://github.com/nhatminh06/market-pulse/actions/runs/45298404500), [PR #11 merged](https://github.com/nhatminh06/market-pulse/pull/11) | **Verified in scope**: Flux revision/recovery, StatsD, persistent MinIO, teardown. **Not** full Kubernetes lakehouse or production durability |
+| M5.1 benchmark latency/speedup claims | Separate local-only checkpoint; no published remote runner evidence or physical query measurements | **BLOCKED / UNVERIFIED**: isolated runtime capacity not qualified, no timing series, p95, median or speedup |
+| Application screenshots and demo video | [Evidence capture checklist](evidence-checklist.md) and [demo plan](demo-script.md) | **Unverified / not committed**; GitHub Actions links do not substitute for UI proof |
 
 ## How to regenerate the verified counts
 
