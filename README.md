@@ -2,7 +2,9 @@
 
 An end-to-end stock-market analytics lakehouse built with Apache Iceberg, Trino, dbt, Airflow, MinIO, Terraform, and Superset — runs entirely on a local machine via Docker Compose, with no paid cloud infrastructure required.
 
-![Architecture](architecture.png)
+![Local lakehouse architecture](architecture.png)
+
+The diagram above describes the **Docker Compose reference application**. The independently tested Kubernetes/Flux work is a **disposable pilot**, not a deployment of the complete lakehouse. See [architecture and qualification boundaries](docs/architecture-and-evidence.md) for both systems, the test evidence, and what remains unverified.
 
 > This is a data-engineering demonstration project, not a trading system or investment tool. Market data is sourced from a free third-party feed (yfinance) and may be delayed, incomplete, or revised; nothing here is financial advice.
 
@@ -37,9 +39,23 @@ dbt-trino SQL, orchestrated daily by Airflow.
 - **A Python data-quality gate** (`quality/validate_gold.py`) with its check-interpretation logic unit-tested independent of a live warehouse.
 - **Pytest coverage** for ingestion, a local Iceberg catalog, and gold-layer formulas (no live REST/MinIO/Trino in PR CI — see `docs/testing.md`).
 - **Terraform-provisioned MinIO** — a single bucket and an IAM policy scoped to only that bucket's ARNs.
-- **CI on every PR**: Python lint + tests, Terraform fmt/init/validate, dbt parse + SQLFluff, Airflow DAG import/structure check, `docker compose config`, YAML lint, and `actionlint` — 8 jobs, all static/fixture-based, no live stack required (see Testing below for what CI does *not* cover).
+- **Pull-request CI** — Python, Terraform, dbt, DAG, Compose, YAML, and workflow static checks; full-stack tests run in separate gated/manual E2E workflows (see Testing below).
 - **A manual/weekly E2E workflow** that boots the real stack and runs `dbt build`/`dbt test`/the quality gate against live Trino — see Testing.
-- Optional Prometheus + Grafana observability stack with a read-only warehouse exporter (see [observability guide](docs/observability.md)).
+- **Optional M3 observability** — Airflow StatsD and a read-only warehouse exporter feed Prometheus/Grafana. Real CI checked metrics, dashboard provisioning APIs, and recovery, **not individual panel rendering** (see [observability evidence](docs/observability.md)).
+- **Separate M4 GitOps pilots** — Flux reconciles StatsD and stateful MinIO workloads in a disposable kind cluster; Git-driven rollout, drift correction, and PVC/object persistence passed Linux/amd64 E2E. **Not a full lakehouse migration** (see [M4 qualification](docs/kubernetes-gitops-plan.md)).
+
+---
+
+## Deployment and verification status
+
+| Scope | Verified evidence | Boundary |
+| --- | --- | --- |
+| Compose lakehouse + M3 monitoring | [Linux/amd64 E2E #45271006974](https://github.com/nhatminh06/market-pulse/actions/runs/45271006974) | Real fixture pipeline, dbt/Gold checks and monitoring APIs; not production-scale data or screenshots |
+| Kubernetes/Flux M4 pilots | [Linux/amd64 E2E #45298404500](https://github.com/nhatminh06/market-pulse/actions/runs/45298404500) | Disposable StatsD/MinIO pilots only; no Kubernetes Airflow/Trino/dbt/Superset deployment |
+| M4 integration into `main` | [Merged PR #11](https://github.com/nhatminh06/market-pulse/pull/11), [post-merge CI #45301461494](https://github.com/nhatminh06/market-pulse/actions/runs/45301461494) | Normal CI passed at merge commit `45cef312`; M4 E2E tested the earlier implementation commit |
+| M5.1 performance baseline | **Blocked** | Isolated runtime capacity unqualified; no timed samples, median, p95, or speedup claim |
+
+See the [architecture and evidence register](docs/architecture-and-evidence.md) for the distinct environments and exact qualification scope.
 
 ---
 
@@ -139,32 +155,21 @@ docker compose down -v       # DESTROYS all data (MinIO objects, Postgres, Icebe
 See [`docs/testing.md`](docs/testing.md) for the full breakdown of what runs
 where and why. Short version:
 
-- **Pull-request CI** runs everything that doesn't need a live warehouse: Python lint + 55 pytest tests, `dbt parse`, SQLFluff, Airflow DAG import/structure, `docker compose config`, YAML/Action lint, Terraform fmt/validate.
-- **Not run on every PR**: `dbt build`, `dbt test`, and the quality gate's real SQL checks — these need Trino/Iceberg actually running. They execute in a manual/weekly [`e2e.yml`](.github/workflows/e2e.yml) workflow instead, against a small deterministic fixture (no live yfinance call). **Latest verified**: [run 45209879444](https://github.com/nhatminh06/market-pulse/actions/runs/45209879444) (2026-11-23) completed successfully — 21/21 dbt model+test checks passed, the Python quality gate reported 4/4 checks passing, and a representative Trino query against `gold.fct_daily_metrics` returned real computed values. The [August 6 run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) is earlier successful evidence.
+- **Pull-request CI** runs static and fixture checks without a live warehouse: Python tests/lint, `dbt parse`, SQLFluff, DAG import/structure, `docker compose config`, YAML/Action lint, and Terraform fmt/validate. The test count changes as the repository evolves; see the specific CI run.
+- **Full-stack Compose E2E runs separately**, not on each PR: [Linux/amd64 run 45271006974](https://github.com/nhatminh06/market-pulse/actions/runs/45271006974) (November 23, 2026) exercised the deterministic fixture with real Trino/Iceberg, 21/21 dbt checks, 4/4 Gold checks, M3 monitoring API checks, and teardown. The [earlier Compose E2E run 45209879444](https://github.com/nhatminh06/market-pulse/actions/runs/45209879444) also passed. The separate [M4 GitOps E2E](https://github.com/nhatminh06/market-pulse/actions/runs/45298404500) qualifies disposable Kubernetes pilots only.
 - Gold-layer formulas (returns, SMA, volatility, volume anomaly) are covered as **pandas specification tests** against the exact formulas in `fct_daily_metrics.sql` — not a run of the actual Trino SQL by themselves. Real SQL correctness against live Trino is what the E2E run above verified.
 
 ---
 
 ## Benchmarks
 
-Query-performance and cold-start claims are **not currently backed by a
-committed benchmark result** — the methodology and scripts exist in
-[`benchmarks/`](benchmarks/) and are documented in
-[`docs/benchmarks.md`](docs/benchmarks.md), but running them requires a live
-Docker stack this repository's own CI/development environment doesn't
-always have. See `docs/resume-evidence.md` for exactly which numbers are
-verified today.
+**M5.1 baseline qualification is blocked.** The existing [benchmark scripts](benchmarks/) and [methodology](docs/benchmarks.md) are not evidence of measured performance. Separate local M5.1 preparation has no qualified isolated runtime or remotely executed benchmark. No startup time, median, p95, or speedup is claimed. The DuckDB/raw-Parquet versus Trino/Iceberg comparison also changes the engine and I/O path, so it cannot establish an Iceberg-only advantage. See the [evidence register](docs/architecture-and-evidence.md).
 
 ---
 
 ## Screenshots / evidence
 
-No screenshots are checked in yet. See
-[`docs/evidence-checklist.md`](docs/evidence-checklist.md) for exactly what
-to capture (Superset panels, Airflow DAG runs, dbt lineage, Trino query
-plans, Iceberg snapshots) and where, and
-[`docs/demo-script.md`](docs/demo-script.md) for a short walkthrough
-sequence.
+No application screenshots have been committed. The [capture checklist](docs/evidence-checklist.md) prioritizes Airflow and Superset UI, Grafana/Prometheus behavior, dbt lineage, Trino/Iceberg results, and optional GitOps evidence. The [90-second demo outline](docs/demo-script.md) is a plan, not an existing recording. Verified CI runs are linked above, but they are not substitutes for screenshots of a running UI. Do not use existing preserved Docker volumes for a disposable capture run.
 
 ---
 
@@ -191,17 +196,17 @@ a 20-ticker universe) — not a claim that any option is universally superior.
 - Live ingestion depends on yfinance, an unofficial free feed with no uptime or accuracy guarantee; data can be delayed, incomplete, or revised.
 - Local Docker Compose is a single-node demo environment, not a production cluster — no hard resource limits are set on any service (only guidance, see Prerequisites). Health checks now exist for every service, but MinIO/Postgres/Trino are the only ones confirmed working against a live container (via the verified E2E run); Iceberg REST, the Airflow API server, and Superset's health checks are best-effort and documented as unverified in `docker-compose.yaml` — nothing else's startup depends on them, so a wrong assumption there shows as "unhealthy" in `docker compose ps`, not a blocked stack.
 - Default local credentials (`minioadmin`/`minioadmin`, `admin`/`admin`, Postgres `airflow`/`airflow`) are safe only because nothing is exposed beyond `localhost` — see `.env.example` before running anything reachable from outside your machine.
-- The optional monitoring stack provisions a dashboard and local alert rules; live-stack qualification of the M3 implementation is pending.
-- The manual/scheduled E2E workflow (`.github/workflows/e2e.yml`) passed most recently on the fix branch ([run 45209879444](https://github.com/nhatminh06/market-pulse/actions/runs/45209879444), 2026-11-23); the [August 6 run 31067450380](https://github.com/nhatminh06/market-pulse/actions/runs/31067450380) is historical evidence. Check each subsequent run rather than assuming it passes on every commit.
-- Benchmark numbers are hardware- and dataset-dependent and not yet produced — see Benchmarks above.
+- M3 monitoring passed a real CI E2E with exporter/Prometheus metrics, provisioned Grafana datasource/dashboard APIs, and a controlled recovery check. Individual dashboard panel rendering, task-duration telemetry, alert firing, and external notification delivery are not established (see [observability qualification](docs/observability.md)).
+- The [Compose E2E workflow](.github/workflows/e2e.yml) passed in [run 45271006974](https://github.com/nhatminh06/market-pulse/actions/runs/45271006974) on November 23, 2026. The [M4 GitOps E2E](https://github.com/nhatminh06/market-pulse/actions/runs/45298404500) tested a different commit/scope; [post-merge ordinary CI](https://github.com/nhatminh06/market-pulse/actions/runs/45301461494) passed on `main`. These do not establish that all checks pass on every later commit.
+- M5.1 has no qualified performance measurements. The local benchmark preparation checkpoint remains unpublished; runtime resource sufficiency, SQL execution, and peak disk use remain unverified. The published `main` branch must not be described as having completed M5.1.
 
 ---
 
 ## Roadmap
 
-- Produce and commit an actual benchmark result (`docs/benchmarks.md`), replacing "unverified" with real numbers.
-- Add health checks and resource limits to `trino`, `iceberg-rest`, and the Airflow containers in `docker-compose.yaml`.
-- Provision Grafana dashboards (currently datasource-only) and validate alert rules with `promtool`.
+- Resume M5.1 only when a separate disposable runtime passes capacity and isolation checks; retain raw measurements before making any performance claim.
+- Qualify currently best-effort Compose health checks under controlled faults and assess resource limits without risking preserved volumes.
+- Capture actual Grafana dashboard panel renders and independently test alert firing/delivery if notification channels are later added; provisioned dashboard APIs and `promtool` checks already exist.
 - Add Iceberg snapshot-management / retention policy documentation and a schema-evolution demo (add a column, show old snapshots still queryable) on a live cluster.
 - Capture the screenshot evidence in `docs/evidence-checklist.md` and link it from this README.
 - Re-run the E2E workflow periodically and keep the verified-run link in Known Limitations current.
@@ -220,6 +225,7 @@ market-pulse/
 ├── .github/workflows/
 │   ├── ci.yml                          # Fast static checks, every PR
 │   ├── e2e.yml                         # Full-stack fixture pipeline, manual + weekly
+│   ├── m4-gitops-e2e.yml              # Label-gated disposable kind/Flux pilot tests
 │   └── docs.yml                        # dbt docs → GitHub Pages, on push to main
 ├── infra/
 │   ├── terraform/                      # MinIO bucket + least-privilege IAM
@@ -235,11 +241,12 @@ market-pulse/
 ├── trino/catalog/iceberg.properties
 ├── observability/prometheus.yml
 ├── benchmarks/                         # Query-benchmark scripts (see docs/benchmarks.md)
-├── tests/{unit,integration,smoke}/     # 55 pytest tests, fixtures in tests/fixtures/
+├── tests/{unit,integration,smoke}/     # Python unit/integration/smoke tests and fixtures
 └── docs/
     ├── data-model.md
     ├── testing.md
     ├── benchmarks.md
+    ├── architecture-and-evidence.md   # Compose versus GitOps pilot, qualification register
     ├── evidence-checklist.md
     ├── demo-script.md
     └── resume-evidence.md
