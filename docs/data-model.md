@@ -110,3 +110,12 @@ compares **raw** `low`/`high`/`close` — not `adj_close` — since adjustment
 factors are applied uniformly to a whole day's OHLC and would not break
 that invariant, but adjusted and raw values are intentionally never
 compared against each other directly anywhere in this pipeline.
+
+## Bronze attempt evidence (M6.1)
+
+Use `python -m ingestion.inspect_lineage --run-id <32-lowercase-hex-ID> --json`
+to inspect retained `market_pulse_run_id` snapshot markers. Multiple snapshots
+can share one attempt ID. Marker evidence is neither a current-row comparison
+nor a record of the Bronze revision dbt consumed. See the
+[lineage and manual recovery guide](lineage-recovery.md) for classifications,
+exit codes, uncertain-commit procedures and the proposed M6.2 boundary.
