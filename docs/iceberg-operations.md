@@ -136,3 +136,13 @@ table, checks snapshot metadata, time travel, recovery, and schema evolution,
 and purges that table in `finally`. It uses fixture rows and the existing
 disposable E2E stack. The existing Bronze fixture and dbt checks remain in
 place. The workflow does not run snapshot expiration or orphan deletion.
+
+## Focused Bronze attempt lookup (M6.1)
+
+`python -m ingestion.inspect_lineage --run-id <32-lowercase-hex-ID> --json`
+provides a metadata-only lookup of retained Bronze run markers, with sanitized
+errors and explicit current/historical evidence. Unlike the full inventory it
+reads no manifests or rows and prints no storage paths. A missing marker does
+not prove a failed commit; a found marker does not prove unchanged rows or dbt
+success. See [lineage recovery](lineage-recovery.md) before deciding on retries.
+No rollback, expiration or cleanup is performed by this command.
